@@ -81,8 +81,11 @@ enum class OperationMode : uint8_t {
 // ----------------------------------------------------------------------------
 // Valores de fabrica
 // ----------------------------------------------------------------------------
-#define DEFAULT_SUBSTRATE_ZONES 2
-#define DEFAULT_SPRINKLER_ZONES 1
+// Valores de fabrica: una zona de sustrato activa y ninguna de aspiracion.
+// Las zonas activas se configuran en el portal avanzado (influyen en la
+// inicializacion de sensores).
+#define DEFAULT_SUBSTRATE_ZONES 1
+#define DEFAULT_SPRINKLER_ZONES 0
 #define DEFAULT_IRRIGATION_S   60
 #define DEFAULT_ALARM_MAX_TEMP  45.0f
 #define DEFAULT_ALARM_MIN_TEMP  0.0f

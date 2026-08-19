@@ -153,10 +153,11 @@ static String renderIndexPage() {
     page += "<label>Alias del dispositivo (opcional)</label><input name=\"deviceAlias\" "
             "maxlength=\"32\" value=\"" + esc(cfg.deviceAlias) + "\">";
 
-    page += "<label>Zonas de sustrato</label><select name=\"substrateZones\">"
-            + optionsHtml(1, MAX_SUBSTRATE_ZONES, cfg.substrateZones) + "</select>";
-    page += "<label>Zonas de aspiracion</label><select name=\"sprinklerZones\">"
-            + optionsHtml(0, MAX_SPRINKLER_ZONES, cfg.sprinklerZones) + "</select>";
+    page += "<p><b>Zonas activas:</b> " + String(cfg.substrateZones)
+            + " de sustrato / " + String(cfg.sprinklerZones)
+            + " de aspiracion.<br>"
+            "<span class=\"note\">La cantidad de zonas activas se configura en "
+            "la pagina avanzada (afecta la inicializacion de sensores).</span></p>";
 
     if (!storeHasValidConfig()) {
         page += "<p class=\"err\">Falta la configuracion avanzada (apikey de "
@@ -166,8 +167,8 @@ static String renderIndexPage() {
     page += "<button type=\"submit\">Guardar y reiniciar</button></form>";
 
     page += "<div class=\"links\">"
-            "<a href=\"/avanzado\">Configuracion avanzada (URL API, WebSocket, "
-            "apikey, tiempos)</a><br>"
+            "<a href=\"/avanzado\">Configuracion avanzada (zonas activas, URL "
+            "API, WebSocket, apikey, tiempos)</a><br>"
             "<a href=\"/calibrar\">Calibracion de humedad por zona</a><br>"
             "<a href=\"/reset\">Restablecer valores de fabrica</a><br>"
             "<a href=\"/status\">Estado (JSON)</a></div>";
@@ -187,8 +188,6 @@ static void handleSave() {
     strncpy(cfg.ssid, s_server.arg("ssid").c_str(), sizeof(cfg.ssid) - 1);
     strncpy(cfg.wifiPass, s_server.arg("wifiPass").c_str(), sizeof(cfg.wifiPass) - 1);
     strncpy(cfg.deviceAlias, s_server.arg("deviceAlias").c_str(), sizeof(cfg.deviceAlias) - 1);
-    cfg.substrateZones = (uint8_t)s_server.arg("substrateZones").toInt();
-    cfg.sprinklerZones = (uint8_t)s_server.arg("sprinklerZones").toInt();
 
     char err[128] = "";
     if (!storeConfigValidate(cfg, err, sizeof(err))) {
@@ -216,6 +215,13 @@ static String renderAvanzadoPage() {
             "<p>Cambie estos parametros solo si sabe lo que hace. Al guardar, "
             "el equipo se reinicia.</p>";
     page += "<form method=\"post\" action=\"/avanzado\">";
+
+    page += "<label>Zonas activas de sustrato</label><select name=\"substrateZones\">"
+            + optionsHtml(1, MAX_SUBSTRATE_ZONES, cfg.substrateZones) + "</select>"
+            "<span class=\"note\">Cada zona activa tiene su sensor de humedad "
+            "de suelo; influye en la inicializacion de sensores.</span>";
+    page += "<label>Zonas activas de aspiracion</label><select name=\"sprinklerZones\">"
+            + optionsHtml(0, MAX_SPRINKLER_ZONES, cfg.sprinklerZones) + "</select>";
 
     page += "<label>URL de la API (PostgREST)</label><input name=\"apiUrl\" required "
             "maxlength=\"128\" value=\"" + esc(cfg.apiUrl) + "\">"
@@ -250,6 +256,8 @@ static void handleAvanzadoSave() {
     strncpy(cfg.apiUrl, s_server.arg("apiUrl").c_str(), sizeof(cfg.apiUrl) - 1);
     strncpy(cfg.wsUrl, s_server.arg("wsUrl").c_str(), sizeof(cfg.wsUrl) - 1);
     strncpy(cfg.apiKey, s_server.arg("apiKey").c_str(), sizeof(cfg.apiKey) - 1);
+    cfg.substrateZones = (uint8_t)s_server.arg("substrateZones").toInt();
+    cfg.sprinklerZones = (uint8_t)s_server.arg("sprinklerZones").toInt();
     cfg.readIntervalS = (uint16_t)s_server.arg("readIntervalS").toInt();
     cfg.uploadIntervalS = (uint16_t)s_server.arg("uploadIntervalS").toInt();
 
@@ -271,14 +279,26 @@ static void handleAvanzadoSave() {
 // Calibracion de humedad (viva)
 // ----------------------------------------------------------------------------
 static void handleCalibrar() {
+    const DeviceConfig cfg = storeConfigLoad();
+    const uint8_t activeZones = storeHasValidConfig()
+                                    ? cfg.substrateZones
+                                    : DEFAULT_SUBSTRATE_ZONES;
+    if (activeZones == 0) {
+        sendResult("Sin zonas activas",
+                   "No hay zonas de sustrato activas para calibrar. "
+                   "Configurelas en la pagina avanzada.", false);
+        return;
+    }
+
     String page = PAGE_HEAD;
     page += "<h1>Calibracion de humedad</h1>"
             "<p>Coloque la sonda de la zona en el medio a medir y presione el "
-            "boton correspondiente. La lectura viva se actualiza sola.</p>"
+            "boton correspondiente. Cada zona de sustrato activa tiene su "
+            "propio sensor de humedad. La lectura viva se actualiza sola.</p>"
             "<meta http-equiv=\"refresh\" content=\"2\">"
             "<table><tr><th>Zona</th><th>ADC vivo</th><th>Seco</th>"
             "<th>Humedo</th><th>Estado</th></tr>";
-    for (uint8_t z = 0; z < MAX_SUBSTRATE_ZONES; ++z) {
+    for (uint8_t z = 0; z < activeZones; ++z) {
         const uint16_t adc = hwSensorsReadSoilRawAdc(z);
         const ZoneCalibration cal = hwCalibrationGet(z);
         page += "<tr><td>" + String(z + 1) + "</td><td>" + String(adc)
@@ -287,7 +307,7 @@ static void handleCalibrar() {
                 + String(cal.calibrated ? "OK" : "PENDIENTE") + "</td></tr>";
     }
     page += "</table>";
-    for (uint8_t z = 0; z < MAX_SUBSTRATE_ZONES; ++z) {
+    for (uint8_t z = 0; z < activeZones; ++z) {
         page += "<form method=\"post\" action=\"/calibrar\" style=\"display:inline\">"
                 "<input type=\"hidden\" name=\"zone\" value=\"" + String(z) + "\">"
                 "<button type=\"submit\" name=\"point\" value=\"dry\">Zona "
@@ -303,8 +323,12 @@ static void handleCalibrar() {
 static void handleCalibrarSet() {
     const uint8_t zone = (uint8_t)s_server.arg("zone").toInt();
     const String point = s_server.arg("point");
-    if (zone >= MAX_SUBSTRATE_ZONES || (point != "dry" && point != "wet")) {
-        sendResult("Error", "Zona o punto de calibracion invalido.", false);
+    const DeviceConfig cfg = storeConfigLoad();
+    const uint8_t activeZones = storeHasValidConfig()
+                                    ? cfg.substrateZones
+                                    : DEFAULT_SUBSTRATE_ZONES;
+    if (zone >= activeZones || (point != "dry" && point != "wet")) {
+        sendResult("Error", "Zona de calibracion invalida o no activa.", false);
         return;
     }
     ZoneCalibration cal = hwCalibrationGet(zone);
@@ -394,6 +418,23 @@ void portalStart() {
     s_server.on("/reset", HTTP_GET, handleReset);
     s_server.on("/reset", HTTP_POST, handleResetDo);
     s_server.on("/status", HTTP_GET, handleStatus);
+    s_server.on("/scan", HTTP_GET, []() {
+        scanStart();
+        s_server.sendHeader("Location", "/", true);
+        s_server.send(302, "text/html", "");
+    });
+
+    // Sondas de deteccion de portal cautivo (Android, iOS, Windows): se
+    // responde 200 con el portal para que el sistema operativo abra el
+    // navegador automaticamente al conectarse al AP.
+    const char* probePaths[] = {
+        "/generate_204", "/hotspot-detect.html", "/success.txt",
+        "/ncsi.txt", "/canonical.html", "/library/test/success.html",
+        "/connecttest.txt", "/gen_204", "/favicon.ico"
+    };
+    for (size_t i = 0; i < sizeof(probePaths) / sizeof(probePaths[0]); ++i) {
+        s_server.on(probePaths[i], HTTP_GET, handleNotFound);
+    }
     s_server.onNotFound(handleNotFound);
     s_server.begin();
 
