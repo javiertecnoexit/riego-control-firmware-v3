@@ -24,6 +24,10 @@ struct NetCommand {
 // setup(): crea la tarea de red (lee la configuracion de store).
 void netInit();
 
+// Pausa/reanuda la tarea: en modo CONFIGURACION debe quedar pausada para que
+// la tarea no revierta el AP del portal a WIFI_STA. El reinicio la reanuda.
+void netSetPaused(bool paused);
+
 // Pide una subida del outbox (non-blocking). El loop principal la llama cada
 // uploadIntervalS.
 void netRequestFlush();

@@ -762,6 +762,7 @@ static void enterConfigSafely() {
     hwRelayAllOff();
     manualUiForceIdle();
     stateMachineEnterConfig();
+    netSetPaused(true);   // el AP del portal no debe competir con la tarea de red
     portalStart();
 }
 

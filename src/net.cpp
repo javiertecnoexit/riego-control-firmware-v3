@@ -30,6 +30,7 @@ static volatile bool      s_configReloadPending = false;
 static volatile int64_t   s_lastBackendSeenEpoch = 0;
 static volatile bool      s_connEverOk = false;
 static volatile uint32_t  s_netStartMs = 0;
+static volatile bool      s_paused = false;   // modo CONFIGURACION: no tocar WiFi
 
 static DeviceConfig s_cfg;                    // copia local (recargable)
 
@@ -443,6 +444,10 @@ static void netTask(void*) {
     uint32_t lastLoopMs = 0;
     for (;;) {
         const uint32_t now = millis();
+        if (s_paused) {
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            continue;
+        }
         if ((now - lastLoopMs) >= NET_TASK_LOOP_MS) {
             lastLoopMs = now;
             connEvaluate();
@@ -488,6 +493,16 @@ void netRequestFlush() {
     if (!s_flushQueue) return;
     const uint32_t dummy = 0;
     xQueueSend(s_flushQueue, &dummy, 0);
+}
+
+void netSetPaused(bool paused) {
+    s_paused = paused;
+    if (paused) {
+        s_ws.disconnect();
+        WiFi.disconnect();
+        WiFi.mode(WIFI_OFF);
+        Serial.println("[NET] Tarea de red pausada (modo CONFIGURACION)");
+    }
 }
 
 bool netTakeCommand(NetCommand* out) {

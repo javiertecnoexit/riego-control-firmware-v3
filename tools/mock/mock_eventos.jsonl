@@ -1,0 +1,2 @@
+{"client_id": 1, "event_type": "reading", "value": 42.5}
+{"client_id": 2, "event_type": "irrigation_start", "zone": "S0"}
