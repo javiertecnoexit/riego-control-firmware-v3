@@ -7,3 +7,7 @@
 # Archivos locales
 *.local
 secret*.json
+# Directorio temporal de los tests nativos de store (backend de archivos)
+store_test_tmp/
+.pio/
+
