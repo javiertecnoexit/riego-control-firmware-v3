@@ -29,11 +29,13 @@ decisiones previas, estas ganan:
 | # | Prioridad | Conflicto resuelto |
 |---|---|---|
 | P1 | Portal cautivo con restablecimiento a valores de fabrica O acceso a configuraciones avanzadas (URL API con valor por defecto, configuracion de zonas, tiempos de lectura y de subida de datos) | Prioridad nueva: se agrega al alcance |
-| P2 | Primer pulso del selector: no cambia la pantalla pero si participa en el flujo | Se preserva el comportamiento de V2 |
+| P2 | Primer pulso del selector: DEBE abrir el menu en pantalla | **Correccion de bug de V2**: V2 no lo muestra; en V3 el primer pulso abre el menu |
 | P3 | Mostrar en pantalla si la conexion inicial fue exitosa | Se agrega al alcance de la UI |
 | P4 | WebSocket como protocolo de comunicacion (bidireccionalidad) | Refuerza D1 |
 | P5 | Seguridad minima para evitar complicaciones; NO usar direcciones MAC | **Reemplaza D4**: se elimina el registro por MAC |
 | P6 | Conexion cloud simple y directa: POST HTTP con JSON a la API REST de Supabase (PostgREST), RLS desactivada, header `apikey` | **Reemplaza el modelo de Edge Function/registro** del plan anterior |
+| P7 | Hardware y usabilidad identicos a V2; se permite simplificar u omitir comportamientos internos si no afectan la funcionalidad requerida | Norma de diseno para todas las fases |
+| P8 | Estructura reducida a lo minimo (pocos archivos planos, sin capas); simplicidad maxima con funcionamiento garantizado | Norma de diseno para todas las fases |
 
 ### 1.2 Insumo De Diseno: Reflexion "Si Tuviera Que Empezar Desde Cero"
 
@@ -137,27 +139,37 @@ P1-P6 y descarta las que las contradicen:
 
 ### 5.3 UI / Pantalla (P2, P3)
 
-- **Primer pulso del Selector**: entra en el flujo de seleccion de zona pero
-  no altera la pantalla en ese primer instante (comportamiento heredado de V2,
-  se preserva).
+- **Primer pulso del Selector**: abre el menu en pantalla (correccion de bug
+  de V2, donde el primer pulso no mostraba el menu). Los pulsos siguientes
+  navegan por el menu como en V2.
 - **Indicador de conexion inicial**: al arrancar, la pantalla muestra si la
   conexion inicial (WiFi + primer contacto con la nube) fue exitosa o fallida,
   con estado persistente durante la sesion.
 - Pantallas existentes: normal (lecturas, hora, alarma), manual, config,
   alarma.
+- La usabilidad debe ser 100 % identica a V2 (modos manual/horario/umbral/
+  alarma, botones y comportamientos), con la unica excepcion del arreglo de P2.
+  Se permite simplificar u omitir comportamientos internos de V2 si no afectan
+  la funcionalidad requerida.
 
 ## 6. Arquitectura Propuesta Del Firmware
 
-### 6.1 Modulos
+### 6.1 Modulos (Estructura Reducida A Lo Minimo)
 
-| Modulo | Responsabilidad | Notas |
+Decision del usuario: pocos archivos planos, sin capas intermedias; un archivo
+por responsabilidad grande. Solo se conserva lo que se prueba o se usa:
+
+| Archivo | Responsabilidad | Pruebas |
 |---|---|---|
-| `hal/` | GPIO, sensores, RTC, OLED, botones, relays | Misma base que V2 |
-| `domain/` | Reglas puras de riego, prioridades, transiciones | Reutilizar `lib/domain` de V2 (ya probado) con revision menor |
-| `runtime/` | Estado activo, deadlines, aplicacion sobre relays | Concurrencia explicita y watchdog |
-| `persist/` | Snapshots de configuracion, outbox critica, configuracion de portal | NVS + particion LittleFS para cola |
-| `cloud/` | Subida PostgREST + WebSocket en tarea dedicada | Sin acceso directo a GPIO |
-| `portal/` | AP + servidor web de configuracion y restablecimiento | Amplia el portal de V2 |
+| `src/main.cpp` | Wiring general, loop de control, UI, tarea de red | HIL |
+| `src/hardware.h/.cpp` | GPIO, sensores, RTC, OLED, botones, relays | HIL |
+| `src/rules.h/.cpp` | Reglas puras de riego, prioridades, deadlines (base `lib/domain` de V2) | Unity nativas |
+| `src/store.h/.cpp` | Configuracion NVS, snapshots, outbox LittleFS | Unity nativas |
+| `src/net.h/.cpp` | WiFi, subida PostgREST, WebSocket, backoff, watermark | Pruebas de contrato contra el mock |
+| `src/portal.h/.cpp` | AP + servidor web de configuracion y restablecimiento | HIL |
+
+Sin carpetas por capa: `main` + 5 archivos planos. La logica de riego sigue
+aislada (probada) pero sin capas intermedias entre reglas y aplicacion.
 
 ### 6.2 Concurrencia
 
@@ -165,7 +177,7 @@ P1-P6 y descarta las que las contradicen:
   (default 30 s), serviceTimeouts en cada pasada, watchdog.
 - Tarea de red (FreeRTOS, prioridad baja): WiFi, subida PostgREST, WebSocket,
   reconexion con backoff. Comunicacion con el control via cola de mensajes.
-- La tarea de red JAMAS toca relays; el runtime procesa las intenciones
+- La tarea de red JAMAS toca relays; el control (main) procesa las intenciones
   (comandos) en su propia evaluacion.
 - Politica explicita en configuracion local segura:
   `max_active_zones = 1` (configurable, con interlock documentado).
@@ -309,7 +321,7 @@ wss://<ws_endpoint>/device/v1/ws
 
 Niveles:
 
-1. **Nativas** (Unity en PC): dominio de riego, runtime, persistencia de
+1. **Nativas** (Unity en PC): reglas de riego, control, persistencia de
    snapshots y outbox.
 2. **De contrato** (host): subida PostgREST y WebSocket contra el mock; casos
    de borde (reconexion, watermark, 4xx/5xx, timeout, IDs duplicados).
@@ -335,10 +347,12 @@ verde + checklist de la fase completado.
   WebSockets).
 - Criterio: estructura estable y decisiones registradas en `docs/decisiones.md`.
 
-### Fase 1 — Dominio, Runtime Y UI
-- Copiar y revisar `lib/domain` de V2; ajustes menores documentados.
-- Runtime con deadlines, `max_active_zones`, interlock y watchdog.
-- UI: indicador de conexion inicial (P3), primer pulso de selector (P2).
+### Fase 1 — Reglas, Control Y UI
+- Copiar y revisar `lib/domain` de V2 como base de `src/rules`; ajustes menores
+  documentados.
+- Control (main) con deadlines, `max_active_zones`, interlock y watchdog.
+- UI: indicador de conexion inicial (P3), primer pulso de selector abre el
+  menu (P2, correccion de bug de V2).
 - Pruebas nativas en verde.
 - Criterio: suite nativa 100 % + comportamiento de UI verificado en placa.
 
@@ -383,25 +397,34 @@ verde + checklist de la fase completado.
 
 - **P1** Portal cautivo: restablecimiento a fabrica + configuraciones
   avanzadas (URL API por defecto, zonas, tiempos lectura/subida).
-- **P2** Primer pulso de selector: afecta el flujo, no la pantalla.
+- **P2** Primer pulso de selector: DEBE abrir el menu en pantalla (correccion
+  de bug de V2).
 - **P3** Indicador de conexion inicial en pantalla.
 - **P4** WebSocket bidireccional.
 - **P5** Seguridad minima; NO usar MAC.
 - **P6** Subida simple: PostgREST directo con apikey, RLS desactivada.
+- **P7** Hardware y usabilidad identicos a V2 (modos manual/horario/umbral/
+  alarma, botones, pantallas); se permite simplificar u omitir comportamientos
+  internos si no afectan la funcionalidad requerida.
+- **P8** Estructura reducida a lo minimo: pocos archivos planos, sin capas
+  intermedias; simplicidad maxima garantizando el buen funcionamiento.
 
-### Pendientes (recomendacion por defecto, confirmar en Fase 0)
+### Decisiones De Diseno (Confirmadas)
 
-| # | Decision | Recomendacion por defecto | Impacto |
-|---|---|---|---|
-| D3 | Outbox en LittleFS | Si, particion dedicada 64 KB | Particiones y Fase 2 |
-| D5 | TLS sin CA (como V2) | Si, documentado como limite | Sin cambios de librerias |
-| D6 | Nombre del repositorio nuevo | `riego-control-firmware-v3` | Repositorio remoto |
-| D7 | Dominio de V2: copiar tal cual vs revisar | Copiar con revision menor y cambios documentados | Fase 1 |
-| D8 | `max_active_zones` por configuracion | Si, default 1 | Runtime y config |
-| D9 | Libreria WebSocket | `arduinoWebSockets` (Links2004), version fija | Fase 0, dependencias |
-| D10 | Autenticacion del WebSocket | Apikey en el primer mensaje (`hello`); sin token por dispositivo | Protocolo WS |
-| D11 | Tipo de subida | PostgREST directo (P6); se documenta el POST con JSON exacto | Protocolo |
-| D12 | Defaults de URL en portal | Pre-cargados con la URL del proyecto actual | Portal (P1) |
+| # | Decision | Estado |
+|---|---|---|
+| D3 | Outbox en LittleFS, particion dedicada 64 KB | Confirmada |
+| D5 | TLS sin CA (como V2), documentado como limite | Confirmada |
+| D6 | Repositorio privado `riego-control-firmware-v3` | Confirmada |
+| D7 | `lib/domain` de V2 como base de `src/rules` con revision menor documentada | Confirmada |
+| D8 | `max_active_zones` configurable, default 1 | Confirmada |
+| D9 | Libreria WebSocket `links2004/WebSockets@2.7.3` (version fija) | Confirmada |
+| D10 | Autenticacion WS: apikey en el primer mensaje (`hello`) | Confirmada |
+| D11 | Subida PostgREST directo (P6) | Confirmada |
+| D12 | URLs de API y WS pre-cargadas por defecto en el portal | Confirmada |
+| D13 | Transportes: mantener ambos (PostgREST uplink + WebSocket downlink) | Confirmada |
+| D14 | Pruebas nativas Unity: conservar (garantizan funcionamiento) | Confirmada |
+| D15 | Estructura reducida: `main` + 5 archivos planos (hardware, rules, store, net, portal) | Confirmada |
 
 ## 12. Riesgos Y Mitigaciones
 
@@ -417,24 +440,23 @@ verde + checklist de la fase completado.
 | Deadline de valvula vs red lenta | Tarea de red separada + watchdog + serviceTimeouts en cada pasada |
 | Restablecimiento de fabrica borra datos por error | Confirmacion en el portal y registro en pantalla; no disponible fuera del modo config |
 
-## 13. Estructura Del Repositorio Nuevo (Propuesta)
+## 13. Estructura Del Repositorio (Reducida)
 
 ```text
 riego-control-firmware-v3/
   platformio.ini
   partitions/no_ota_with_littlefs.csv
   src/
-    main.cpp
-    hal/        (sensors, rtc, oled, buttons, relay, wifi)
-    domain/     (motor de riego puro)
-    runtime/    (deadlines, concurrencia, watchdog)
-    persist/    (snapshots, outbox, config)
-    cloud/      (postgrest, websocket, backoff, watermark)
-    portal/     (AP de configuracion + avanzado + restablecimiento)
+    main.cpp      (wiring, loop de control, UI, tarea de red)
+    hardware.h    (GPIO, sensores, RTC, OLED, botones, relays)
+    rules.h       (reglas puras de riego; base lib/domain de V2)
+    store.h       (config NVS, snapshots, outbox)
+    net.h         (WiFi, PostgREST, WebSocket, backoff, watermark)
+    portal.h      (AP de configuracion + avanzado + restablecimiento)
   test/
-    domain/  (Unity nativas)
-    persist/
-    cloud/
+    rules/    (Unity nativas)
+    store/
+    net/      (pruebas de contrato contra el mock)
   docs/
     README.md
     arquitectura.md
@@ -451,15 +473,14 @@ riego-control-firmware-v3/
 
 ## 14. Proximo Paso
 
-Confirmar las decisiones pendientes D3-D12 de la seccion 11. Con eso se ejecuta
-la Fase 0: creacion de la carpeta/repositorio nuevo y el commit inicial de
-estructura y documentacion. Ninguna implementacion de firmware ocurre antes de
-la aprobacion de este plan.
+Fase 0 completada (estructura + build validado + repo remoto). Siguiente:
+Fase 1 (reglas, control y UI) con base `src/rules` copiada de `lib/domain` de
+V2 y pruebas nativas en verde.
 
 ## 15. Fuente De Insumo
 
 - `riego-control-firmware-v2/Si tuviera que empezar desde cero/README.md`
   (reflexion hipotetica autorizada por el usuario como insumo para V3; ver
   1.2 para el mapeo adopcion/descarte).
-- Prioridades P1-P6 del usuario (19/08/2026), que preceden a decisiones
+- Prioridades P1-P8 del usuario (19/08/2026), que preceden a decisiones
   anteriores en caso de conflicto.

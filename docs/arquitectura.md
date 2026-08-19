@@ -11,8 +11,9 @@ operativo; ante discrepancia, prevalece el plan.
 - **Tarea de red** (FreeRTOS, prioridad baja): WiFi, subida PostgREST,
   WebSocket, reconexion con backoff. JAMAS toca GPIO; se comunica con el
   control via cola de mensajes.
-- **Modulos**: `hal` (hardware), `domain` (reglas puras, base V2), `runtime`
-  (deadlines/concurrencia), `persist` (snapshots + outbox), `cloud`
+- **Archivos planos** (estructura reducida por decision del usuario): `main`
+  (control + UI), `hardware` (GPIO/sensores/RTC/OLED/botones/relays), `rules`
+  (reglas puras, base V2), `store` (snapshots + outbox), `net`
   (PostgREST + WebSocket), `portal` (AP de configuracion).
 - **Persistencia**: NVS `cfg` (configuracion operativa y de portal);
   snapshots `config_current`/`config_previous` (politica cloud completa);

@@ -9,11 +9,13 @@ conflicto.
 | # | Decision | Estado |
 |---|---|---|
 | P1 | Portal cautivo con restablecimiento a fabrica y configuraciones avanzadas (URL API por defecto, zonas, tiempos de lectura y subida) | Aprobada |
-| P2 | Primer pulso del selector: participa en el flujo sin cambiar la pantalla | Aprobada |
+| P2 | Primer pulso del selector: DEBE abrir el menu en pantalla | Aprobada; correccion de bug de V2 |
 | P3 | Indicador en pantalla de exito/fallo de la conexion inicial | Aprobada |
 | P4 | WebSocket como protocolo de comunicacion (bidireccionalidad) | Aprobada |
 | P5 | Seguridad minima; NO usar direcciones MAC | Aprobada (reemplaza registro por MAC) |
 | P6 | Subida simple y directa: POST JSON a PostgREST, RLS desactivada, header `apikey` | Aprobada (reemplaza modelo de Edge Function) |
+| P7 | Hardware y usabilidad identicos a V2; simplificar u omitir comportamientos internos solo si no afecta la funcionalidad requerida | Aprobada |
+| P8 | Estructura reducida a lo minimo: pocos archivos planos, sin capas intermedias | Aprobada |
 
 ## Decisiones De Diseno (Vigentes)
 
@@ -31,6 +33,9 @@ conflicto.
 | D10 | Autenticacion del WebSocket: `apikey` en el primer mensaje (`hello`); sin token por dispositivo | Aprobada (19/08/2026) |
 | D11 | Subida por PostgREST directo (P6), con el POST JSON exacto documentado | Aprobada (19/08/2026) |
 | D12 | URLs de API y WebSocket pre-cargadas por defecto en el portal | Aprobada (19/08/2026) |
+| D13 | Mantener ambos transportes: PostgREST (uplink) + WebSocket (downlink) | Aprobada (19/08/2026) |
+| D14 | Conservar pruebas nativas Unity (garantizan funcionamiento) | Aprobada (19/08/2026) |
+| D15 | Estructura reducida: `main` + 5 archivos planos (hardware, rules, store, net, portal) | Aprobada (19/08/2026) |
 
 ## Registro De Cambios
 
@@ -39,3 +44,4 @@ conflicto.
 | 19/08/2026 | Revision 2 del plan: prioridades P1-P6; se elimina el registro por MAC y el modelo de Edge Function; se agregan portal cautivo, indicador de conexion, selector y tiempos configurables |
 | 19/08/2026 | Aprobacion de D3, D5-D12 con recomendacion por defecto |
 | 19/08/2026 | Fase 0 ejecutada: estructura, `platformio.ini`, particiones, docs base |
+| 19/08/2026 | Revision 3 del plan: P2 corregido (primer pulso abre el menu, bug de V2); P7 (usabilidad identica, simplificar solo lo interno) y P8 (estructura minima); D13-D15; estructura plana de archivos |

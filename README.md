@@ -28,7 +28,7 @@ de integracion pruebe su implementacion antes de conectarla al dispositivo.
 ## Estructura
 
 ```text
-src/         Firmware (hal, domain, runtime, persist, cloud, portal)
+src/         Firmware (main + hardware, rules, store, net, portal)
 test/        Pruebas nativas (Unity)
 docs/        Arquitectura, decisiones, contrato cloud, checklist, esquema DB
 tools/       Mock de referencia y suite de conformidad
