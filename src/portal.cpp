@@ -160,8 +160,9 @@ static String renderIndexPage() {
             "la pagina avanzada (afecta la inicializacion de sensores).</span></p>";
 
     if (!storeHasValidConfig()) {
-        page += "<p class=\"err\">Falta la configuracion avanzada (apikey de "
-                "Supabase). Complete el formulario y luego guarde aqui.</p>";
+        page += "<p class=\"err\">Primera configuracion: revise la pagina "
+                "avanzada (URL de la API que le entregue el desarrollador y "
+                "credenciales, si las usa) y luego guarde aqui.</p>";
     }
 
     page += "<button type=\"submit\">Guardar y reiniciar</button></form>";
@@ -229,8 +230,10 @@ static String renderAvanzadoPage() {
     page += "<label>URL del WebSocket (opcional)</label><input name=\"wsUrl\" "
             "maxlength=\"128\" value=\"" + esc(cfg.wsUrl) + "\">"
             "<span class=\"note\">Vacio = sin canal WebSocket.</span>";
-    page += "<label>apikey de Supabase</label><input name=\"apiKey\" required "
-            "maxlength=\"128\" value=\"" + esc(cfg.apiKey) + "\">";
+    page += "<label>apikey (opcional)</label><input name=\"apiKey\" "
+            "maxlength=\"128\" value=\"" + esc(cfg.apiKey) + "\">"
+            "<span class=\"note\">Solo si su backend la usa (ej. Supabase). "
+            "Con otra tecnologia puede dejarse vacia.</span>";
     page += "<label>Tiempo de lectura (seg)</label><input name=\"readIntervalS\" "
             "type=\"number\" min=\"5\" max=\"3600\" value=\""
             + String(cfg.readIntervalS) + "\">";

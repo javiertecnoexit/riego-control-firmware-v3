@@ -120,7 +120,7 @@ void test_invalid_config_rejected_and_current_intact() {
     TEST_ASSERT_FALSE(storeConfigApply(bad));
 
     bad = sampleConfig(2);
-    bad.apiKey[0] = '\0';
+    bad.ssid[0] = '\0';
     TEST_ASSERT_FALSE(storeConfigApply(bad));
 
     bad = sampleConfig(2);
@@ -129,6 +129,12 @@ void test_invalid_config_rejected_and_current_intact() {
 
     const DeviceConfig loaded = storeConfigLoad();
     TEST_ASSERT_EQUAL_UINT32(1, loaded.version);   // current intacto
+
+    // La apikey es opcional: config valida sin ella (backend sin autenticacion).
+    DeviceConfig noKey = sampleConfig(2);
+    noKey.apiKey[0] = '\0';
+    TEST_ASSERT_TRUE(storeConfigApply(noKey));
+    TEST_ASSERT_EQUAL_UINT32(2, storeConfigLoad().version);
 }
 
 void test_version_non_regressive() {

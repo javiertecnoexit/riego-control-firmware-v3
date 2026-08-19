@@ -270,10 +270,9 @@ bool storeConfigValidate(const DeviceConfig& cfg, char* err, size_t errLen) {
         snprintf(err, errLen, "URL de WebSocket debe ser ws(s):// o vacia");
         return false;
     }
-    if (cfg.apiKey[0] == '\0') {
-        snprintf(err, errLen, "apikey de Supabase obligatoria");
-        return false;
-    }
+    // La apikey es OPCIONAL: si el backend del desarrollador usa otra
+    // tecnologia (API abierta, otro header de autenticacion), el firmware
+    // funciona igual; solo envia headers de auth si la clave esta seteada.
     if (errLen > 0) err[0] = '\0';
     return true;
 }
