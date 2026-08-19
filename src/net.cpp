@@ -60,7 +60,7 @@ static bool parseUrl(const char* url, ParsedUrl& out) {
     const char* pathStart = strchr(hostStart, '/');
     const char* colon = strchr(hostStart, ':');
     size_t hostLen;
-    if (pathStart && colon && colon < pathStart) {
+    if (colon && (!pathStart || colon < pathStart)) {
         hostLen = (size_t)(colon - hostStart);
         out.port = (uint16_t)atoi(colon + 1);
     } else {
@@ -85,14 +85,20 @@ static uint32_t s_wifiRetryAtMs = 0;
 
 static bool wifiEnsure() {
     if (s_cfg.ssid[0] == '\0') return false;
-    if (WiFi.status() == WL_CONNECTED) return true;
-    const uint32_t now = millis();
-    if (s_wifiRetryAtMs > now) return false;
-    s_wifiRetryAtMs = now + NET_WIFI_RETRY_MS;
-    WiFi.disconnect();
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(s_cfg.ssid, s_cfg.wifiPass);
-    Serial.printf("[NET] WiFi conectando a %s\n", s_cfg.ssid);
+    const wl_status_t st = WiFi.status();
+    if (st == WL_CONNECTED) return true;
+    // No reiniciar el intento mientras se esta conectando (el primer begin()
+    // puede tardar varios segundos); solo reintentar cuando el intento previo
+    // haya terminado o fallado.
+    if (st == WL_DISCONNECTED || st == WL_NO_SSID_AVAIL ||
+        st == WL_CONNECT_FAILED || st == WL_IDLE_STATUS) {
+        const uint32_t now = millis();
+        if (s_wifiRetryAtMs > now) return false;
+        s_wifiRetryAtMs = now + NET_WIFI_RETRY_MS;
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(s_cfg.ssid, s_cfg.wifiPass);
+        Serial.printf("[NET] WiFi conectando a %s\n", s_cfg.ssid);
+    }
     return false;
 }
 

@@ -120,9 +120,9 @@ enum class OperationMode : uint8_t {
 #define MAX_TELEMETRY_READINGS  128
 
 #define NET_TASK_LOOP_MS        200UL      // periodo de la tarea de red
-#define NET_TASK_STACK_SIZE     8192UL
+#define NET_TASK_STACK_SIZE     12288UL    // frame HTTP (4 KB) + JSON + TLS
 #define NET_TASK_PRIORITY       1          // baja: no compite con el control
-#define NET_WIFI_RETRY_MS       5000UL     // reintento de conexion WiFi
+#define NET_WIFI_RETRY_MS       15000UL    // reintento de conexion WiFi
 #define NET_WS_RECONNECT_MS     5000UL     // reconexion WS (fija, simplificada)
 #define NET_WS_KEEPALIVE_MS     120000UL   // sin mensajes de la nube -> reconectar
 #define NET_OUTBOX_BATCH_MAX    32u        // lineas maximas por lote POST

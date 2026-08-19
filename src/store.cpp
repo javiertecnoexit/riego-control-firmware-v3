@@ -1,6 +1,7 @@
 #include "store.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "config.h"
@@ -386,43 +387,71 @@ static bool trimOutbox(char* buf, size_t len, size_t count) {
 }
 
 bool storeOutboxAppend(const char* line) {
-    char buf[STORE_OUTBOX_MAX_BYTES + 1];
+    // Los buffers se asignan en heap: en placa el stack del loop es de 8 KB.
+    char* buf = (char*)malloc(STORE_OUTBOX_MAX_BYTES + 1);
+    if (!buf) return false;
     size_t len = 0, count = 0;
-    if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return false;
+    if (!outboxReadAll(buf, STORE_OUTBOX_MAX_BYTES + 1, &len, &count)) {
+        free(buf);
+        return false;
+    }
 
     const size_t lineLen = strlen(line);
-    if (len + lineLen + 1 > sizeof(buf)) {
-        if (!trimOutbox(buf, len, count)) return false;
-        if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return false;
+    if (len + lineLen + 1 > STORE_OUTBOX_MAX_BYTES + 1) {
+        if (!trimOutbox(buf, len, count)) {
+            free(buf);
+            return false;
+        }
+        if (!outboxReadAll(buf, STORE_OUTBOX_MAX_BYTES + 1, &len, &count)) {
+            free(buf);
+            return false;
+        }
     }
-    if (len + lineLen + 1 > sizeof(buf)) return false;
+    if (len + lineLen + 1 > STORE_OUTBOX_MAX_BYTES + 1) {
+        free(buf);
+        return false;
+    }
 
     memcpy(buf + len, line, lineLen);
     len += lineLen;
     buf[len++] = '\n';
-    if (!outboxWriteAll(buf, len)) return false;
+    const bool ok = outboxWriteAll(buf, len);
 
-    if (len > STORE_OUTBOX_MAX_BYTES || count + 1 > STORE_OUTBOX_MAX_LINES) {
+    if (ok && (len > STORE_OUTBOX_MAX_BYTES || count + 1 > STORE_OUTBOX_MAX_LINES)) {
         trimOutbox(buf, len, count + 1);
     }
-    return true;
+    free(buf);
+    return ok;
 }
 
 size_t storeOutboxCount() {
-    char buf[STORE_OUTBOX_MAX_BYTES + 1];
+    char* buf = (char*)malloc(STORE_OUTBOX_MAX_BYTES + 1);
+    if (!buf) return 0;
     size_t len = 0, count = 0;
-    if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return 0;
-    return count;
+    const bool ok = outboxReadAll(buf, STORE_OUTBOX_MAX_BYTES + 1, &len, &count);
+    free(buf);
+    return ok ? count : 0;
 }
 
 bool storeOutboxAckUpTo(uint32_t watermark) {
-    char buf[STORE_OUTBOX_MAX_BYTES + 1];
+    char* buf = (char*)malloc(STORE_OUTBOX_MAX_BYTES + 1);
+    if (!buf) return false;
     size_t len = 0, count = 0;
-    if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return false;
-    if (count == 0) return true;
+    if (!outboxReadAll(buf, STORE_OUTBOX_MAX_BYTES + 1, &len, &count)) {
+        free(buf);
+        return false;
+    }
+    if (count == 0) {
+        free(buf);
+        return true;
+    }
 
     // Reescribir solo las lineas con client_id > watermark.
-    char out[STORE_OUTBOX_MAX_BYTES + 1];
+    char* out = (char*)malloc(STORE_OUTBOX_MAX_BYTES + 1);
+    if (!out) {
+        free(buf);
+        return false;
+    }
     size_t outLen = 0;
     size_t start = 0;
     for (size_t i = 0; i <= len; ++i) {
@@ -431,7 +460,11 @@ bool storeOutboxAckUpTo(uint32_t watermark) {
             if (lineLen > 0) {
                 const uint32_t id = lineClientId(buf + start, lineLen);
                 if (id > watermark) {
-                    if (outLen + lineLen + 1 > sizeof(out)) return false;
+                    if (outLen + lineLen + 1 > STORE_OUTBOX_MAX_BYTES + 1) {
+                        free(buf);
+                        free(out);
+                        return false;
+                    }
                     memcpy(out + outLen, buf + start, lineLen);
                     outLen += lineLen;
                     out[outLen++] = '\n';
@@ -440,7 +473,10 @@ bool storeOutboxAckUpTo(uint32_t watermark) {
             start = i + 1;
         }
     }
-    return outboxWriteAll(out, outLen);
+    const bool ok = outboxWriteAll(out, outLen);
+    free(buf);
+    free(out);
+    return ok;
 }
 
 void storeOutboxClear() {
@@ -454,25 +490,36 @@ size_t storeOutboxUsedBytes() {
 }
 
 bool storeOutboxReadLine(size_t index, char* buf, size_t cap) {
-    char all[STORE_OUTBOX_MAX_BYTES + 1];
+    char* all = (char*)malloc(STORE_OUTBOX_MAX_BYTES + 1);
+    if (!all) return false;
     size_t len = 0, count = 0;
-    if (!outboxReadAll(all, sizeof(all), &len, &count)) return false;
-    if (index >= count) return false;
+    if (!outboxReadAll(all, STORE_OUTBOX_MAX_BYTES + 1, &len, &count)) {
+        free(all);
+        return false;
+    }
+    if (index >= count) {
+        free(all);
+        return false;
+    }
     size_t start = 0;
     size_t found = 0;
     for (size_t i = 0; i <= len && found <= index; ++i) {
         if (i == len || all[i] == '\n') {
             if (found == index) {
                 const size_t lineLen = i - start;
-                if (lineLen == 0 || lineLen >= cap) return false;
-                memcpy(buf, all + start, lineLen);
-                buf[lineLen] = '\0';
-                return true;
+                const bool ok = (lineLen > 0 && lineLen < cap);
+                if (ok) {
+                    memcpy(buf, all + start, lineLen);
+                    buf[lineLen] = '\0';
+                }
+                free(all);
+                return ok;
             }
             found++;
             start = i + 1;
         }
     }
+    free(all);
     return false;
 }
 
