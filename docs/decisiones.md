@@ -28,7 +28,7 @@ conflicto.
 | D5 | TLS/HTTPS sin verificar CA (igual que V2), documentado como limite | Aprobada (19/08/2026) |
 | D6 | Repositorio nuevo privado `riego-control-firmware-v3` (rama `main`) | Aprobada (19/08/2026) |
 | D7 | `lib/domain` de V2 como base: copiar con revision menor y cambios documentados | Aprobada (19/08/2026) |
-| D8 | `max_active_zones` configurable, default 1, con interlock | Aprobada (19/08/2026) |
+| D8 | `max_active_zones` configurable, default 1, con interlock | **Reemplazada por decision del usuario (19/08/2026)**: no hay zonas simultaneas contempladas; se elimina del firmware |
 | D9 | Libreria WebSocket `links2004/WebSockets@2.7.3` (version fija; paquete `arduinoWebSockets` no existe en el registro) | Aprobada (19/08/2026) |
 | D10 | Autenticacion del WebSocket: `apikey` en el primer mensaje (`hello`); sin token por dispositivo | Aprobada (19/08/2026) |
 | D11 | Subida por PostgREST directo (P6), con el POST JSON exacto documentado | Aprobada (19/08/2026) |

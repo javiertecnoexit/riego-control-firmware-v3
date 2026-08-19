@@ -1,0 +1,455 @@
+#include "store.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "config.h"
+
+// ============================================================================
+// store.cpp — Persistencia V3.
+// Backend doble: archivos planos en el host (pruebas nativas, simula
+// reinicios) y NVS + LittleFS en la placa. Sin Arduino en el backend de
+// archivos para que los tests Unity compilen en host.
+// ============================================================================
+
+#if defined(STORE_BACKEND_FILE)
+#include <sys/stat.h>
+#if defined(_WIN32)
+#include <direct.h>
+#endif
+#else
+#include <Arduino.h>
+#include <LittleFS.h>
+#include <Preferences.h>
+#endif
+
+static const uint32_t SCHEMA_VERSION = STORE_CFG_SCHEMA_VERSION;
+
+// ----------------------------------------------------------------------------
+// CRC32 (simple, suficiente para detectar corrupcion)
+// ----------------------------------------------------------------------------
+static uint32_t crc32(const void* data, size_t len) {
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= p[i];
+        for (int b = 0; b < 8; ++b) {
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+        }
+    }
+    return ~crc;
+}
+
+// ----------------------------------------------------------------------------
+// Backend de configuracion (blob = [crc4][schema4][struct])
+// ----------------------------------------------------------------------------
+#if defined(STORE_BACKEND_FILE)
+
+static char s_dir[128] = "store_data";
+
+static void blobPath(char* out, size_t cap, const char* name) {
+    snprintf(out, cap, "%s/%s", s_dir, name);
+}
+
+static bool blobWrite(const char* name, const DeviceConfig& cfg) {
+    char path[160];
+    blobPath(path, sizeof(path), name);
+    uint8_t blob[sizeof(uint32_t) * 2 + sizeof(DeviceConfig)];
+    const uint32_t crc = crc32(&cfg, sizeof(cfg));
+    memcpy(blob, &crc, 4);
+    const uint32_t schema = SCHEMA_VERSION;
+    memcpy(blob + 4, &schema, 4);
+    memcpy(blob + 8, &cfg, sizeof(cfg));
+    FILE* f = fopen(path, "wb");
+    if (!f) return false;
+    const size_t written = fwrite(blob, 1, sizeof(blob), f);
+    fclose(f);
+    return written == sizeof(blob);
+}
+
+static bool blobRead(const char* name, DeviceConfig& cfg) {
+    char path[160];
+    blobPath(path, sizeof(path), name);
+    uint8_t blob[sizeof(uint32_t) * 2 + sizeof(DeviceConfig)];
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    const size_t n = fread(blob, 1, sizeof(blob), f);
+    fclose(f);
+    if (n != sizeof(blob)) return false;
+    uint32_t crc, schema;
+    memcpy(&crc, blob, 4);
+    memcpy(&schema, blob + 4, 4);
+    if (schema != SCHEMA_VERSION) return false;
+    memcpy(&cfg, blob + 8, sizeof(cfg));
+    return crc32(&cfg, sizeof(cfg)) == crc;
+}
+
+#else  // STORE_BACKEND_NVS (placa)
+
+static Preferences s_prefs;
+static const char* NVS_NS = "cfg";
+
+static bool blobWrite(const char* name, const DeviceConfig& cfg) {
+    uint8_t blob[sizeof(uint32_t) * 2 + sizeof(DeviceConfig)];
+    const uint32_t crc = crc32(&cfg, sizeof(cfg));
+    memcpy(blob, &crc, 4);
+    const uint32_t schema = SCHEMA_VERSION;
+    memcpy(blob + 4, &schema, 4);
+    memcpy(blob + 8, &cfg, sizeof(cfg));
+    s_prefs.begin(NVS_NS, false);
+    const size_t n = s_prefs.putBytes(name, blob, sizeof(blob));
+    s_prefs.end();
+    return n == sizeof(blob);
+}
+
+static bool blobRead(const char* name, DeviceConfig& cfg) {
+    uint8_t blob[sizeof(uint32_t) * 2 + sizeof(DeviceConfig)];
+    s_prefs.begin(NVS_NS, true);
+    const size_t n = s_prefs.getBytes(name, blob, sizeof(blob));
+    s_prefs.end();
+    if (n != sizeof(blob)) return false;
+    uint32_t crc, schema;
+    memcpy(&crc, blob, 4);
+    memcpy(&schema, blob + 4, 4);
+    if (schema != SCHEMA_VERSION) return false;
+    memcpy(&cfg, blob + 8, sizeof(cfg));
+    return crc32(&cfg, sizeof(cfg)) == crc;
+}
+
+#endif
+
+// ----------------------------------------------------------------------------
+// Backend de outbox (archivo JSONL)
+// ----------------------------------------------------------------------------
+#if defined(STORE_BACKEND_FILE)
+
+static void outboxPath(char* out, size_t cap) {
+    snprintf(out, cap, "%s/outbox.jsonl", s_dir);
+}
+
+static bool outboxReadAll(char* buf, size_t cap, size_t* outLen, size_t* outCount) {
+    char path[160];
+    outboxPath(path, sizeof(path));
+    FILE* f = fopen(path, "rb");
+    if (!f) return true;   // archivo inexistente = outbox vacio
+    const size_t n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    *outLen = n;
+    size_t count = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (buf[i] == '\n') count++;
+    }
+    *outCount = count;
+    return true;
+}
+
+static bool outboxWriteAll(const char* buf, size_t len) {
+    char path[160];
+    outboxPath(path, sizeof(path));
+    FILE* f = fopen(path, "wb");
+    if (!f) return false;
+    const size_t written = fwrite(buf, 1, len, f);
+    fclose(f);
+    return written == len;
+}
+
+static bool outboxFileSize(size_t* outSize) {
+    char path[160];
+    outboxPath(path, sizeof(path));
+    FILE* f = fopen(path, "rb");
+    if (!f) {
+        *outSize = 0;
+        return true;
+    }
+    fseek(f, 0, SEEK_END);
+    *outSize = (size_t)ftell(f);
+    fclose(f);
+    return true;
+}
+
+#else  // LittleFS (placa)
+
+static const char* OUTBOX_PATH = "/outbox.jsonl";
+
+static bool outboxReadAll(char* buf, size_t cap, size_t* outLen, size_t* outCount) {
+    if (!LittleFS.exists(OUTBOX_PATH)) return true;
+    File f = LittleFS.open(OUTBOX_PATH, "r");
+    if (!f) return true;
+    const size_t n = f.readBytes(buf, cap - 1);
+    f.close();
+    buf[n] = '\0';
+    *outLen = n;
+    size_t count = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (buf[i] == '\n') count++;
+    }
+    *outCount = count;
+    return true;
+}
+
+static bool outboxWriteAll(const char* buf, size_t len) {
+    File f = LittleFS.open(OUTBOX_PATH, "w");
+    if (!f) return false;
+    const size_t written = f.write((const uint8_t*)buf, len);
+    f.close();
+    return written == len;
+}
+
+static bool outboxFileSize(size_t* outSize) {
+    if (!LittleFS.exists(OUTBOX_PATH)) {
+        *outSize = 0;
+        return true;
+    }
+    File f = LittleFS.open(OUTBOX_PATH, "r");
+    if (!f) {
+        *outSize = 0;
+        return true;
+    }
+    *outSize = (size_t)f.size();
+    f.close();
+    return true;
+}
+
+#endif
+
+// ----------------------------------------------------------------------------
+// Configuracion — snapshots
+// ----------------------------------------------------------------------------
+DeviceConfig storeConfigDefaults() {
+    DeviceConfig cfg = {};
+    cfg.version = 0;
+    cfg.substrateZones = DEFAULT_SUBSTRATE_ZONES;
+    cfg.sprinklerZones = DEFAULT_SPRINKLER_ZONES;
+    cfg.readIntervalS = DEFAULT_READ_INTERVAL_S;
+    cfg.uploadIntervalS = DEFAULT_UPLOAD_INTERVAL_S;
+    strncpy(cfg.apiUrl, DEFAULT_API_URL, sizeof(cfg.apiUrl) - 1);
+    strncpy(cfg.wsUrl, DEFAULT_WS_URL, sizeof(cfg.wsUrl) - 1);
+    return cfg;
+}
+
+static bool validUrl(const char* url, const char* httpPrefix, const char* wsPrefix) {
+    const size_t n = strlen(url);
+    if (n == 0) return (wsPrefix != NULL);   // wsUrl puede estar vacio
+    if (n > 127) return false;
+    if (httpPrefix && strncmp(url, httpPrefix, strlen(httpPrefix)) == 0) return true;
+    if (wsPrefix && strncmp(url, wsPrefix, strlen(wsPrefix)) == 0) return true;
+    return false;
+}
+
+bool storeConfigValidate(const DeviceConfig& cfg, char* err, size_t errLen) {
+    if (cfg.ssid[0] == '\0') {
+        snprintf(err, errLen, "SSID de WiFi obligatorio");
+        return false;
+    }
+    if (cfg.substrateZones < 1 || cfg.substrateZones > MAX_SUBSTRATE_ZONES) {
+        snprintf(err, errLen, "Zonas de sustrato fuera de rango (1..%d)",
+                 MAX_SUBSTRATE_ZONES);
+        return false;
+    }
+    if (cfg.sprinklerZones > MAX_SPRINKLER_ZONES) {
+        snprintf(err, errLen, "Zonas de aspiracion fuera de rango (0..%d)",
+                 MAX_SPRINKLER_ZONES);
+        return false;
+    }
+    if (cfg.readIntervalS < 5 || cfg.readIntervalS > 3600) {
+        snprintf(err, errLen, "Tiempo de lectura fuera de rango (5..3600 s)");
+        return false;
+    }
+    if (cfg.uploadIntervalS < 10 || cfg.uploadIntervalS > 3600) {
+        snprintf(err, errLen, "Tiempo de subida fuera de rango (10..3600 s)");
+        return false;
+    }
+    if (!validUrl(cfg.apiUrl, "https://", NULL) &&
+        !validUrl(cfg.apiUrl, "http://", NULL)) {
+        snprintf(err, errLen, "URL de API debe ser http(s)://");
+        return false;
+    }
+    if (!validUrl(cfg.wsUrl, NULL, "wss://") &&
+        !validUrl(cfg.wsUrl, NULL, "ws://")) {
+        snprintf(err, errLen, "URL de WebSocket debe ser ws(s):// o vacia");
+        return false;
+    }
+    if (cfg.apiKey[0] == '\0') {
+        snprintf(err, errLen, "apikey de Supabase obligatoria");
+        return false;
+    }
+    if (errLen > 0) err[0] = '\0';
+    return true;
+}
+
+static bool cfgIsValid(const DeviceConfig& cfg) {
+    char err[64];
+    return storeConfigValidate(cfg, err, sizeof(err));
+}
+
+bool storeHasValidConfig() {
+    DeviceConfig cfg;
+    if (blobRead("cur", cfg) && cfgIsValid(cfg)) return true;
+    if (blobRead("prev", cfg) && cfgIsValid(cfg)) return true;
+    return false;
+}
+
+DeviceConfig storeConfigLoad() {
+    DeviceConfig cfg;
+    if (blobRead("cur", cfg) && cfgIsValid(cfg)) return cfg;
+    if (blobRead("prev", cfg) && cfgIsValid(cfg)) return cfg;
+    return storeConfigDefaults();
+}
+
+bool storeConfigApply(const DeviceConfig& cfg) {
+    if (!cfgIsValid(cfg)) return false;
+
+    DeviceConfig cur;
+    if (blobRead("cur", cur) && cfgIsValid(cur)) {
+        if (cfg.version <= cur.version) return false;   // version no regresiva
+        blobWrite("prev", cur);
+    }
+    return blobWrite("cur", cfg);
+}
+
+// ----------------------------------------------------------------------------
+// Outbox
+// ----------------------------------------------------------------------------
+static uint32_t lineClientId(const char* line, size_t len) {
+    static const char needle[] = "\"client_id\":";
+    const size_t needleLen = sizeof(needle) - 1;
+    for (size_t i = 0; i + needleLen <= len; ++i) {
+        if (memcmp(line + i, needle, needleLen) == 0) {
+            uint32_t id = 0;
+            size_t j = i + needleLen;
+            while (j < len && line[j] >= '0' && line[j] <= '9') {
+                id = id * 10u + (uint32_t)(line[j] - '0');
+                j++;
+            }
+            return id;
+        }
+    }
+    return 0;
+}
+
+static bool trimOutbox(char* buf, size_t len, size_t count) {
+    if (len <= STORE_OUTBOX_MAX_BYTES && count <= STORE_OUTBOX_MAX_LINES) {
+        return true;
+    }
+    // Conservar las ultimas STORE_OUTBOX_MAX_LINES lineas dentro del limite.
+    const char* keep = buf + len;
+    size_t kept = 0;
+    for (size_t i = len; i > 0; --i) {
+        if (buf[i - 1] == '\n') {
+            kept++;
+            keep = buf + i;
+            if (kept >= STORE_OUTBOX_MAX_LINES) break;
+        }
+    }
+    const size_t keepLen = (size_t)((buf + len) - keep);
+    if (keepLen > STORE_OUTBOX_MAX_BYTES) {
+        keep = buf + len - STORE_OUTBOX_MAX_BYTES;
+        while (keep < buf + len && *keep != '\n') keep++;   // no cortar linea
+        if (keep < buf + len) keep++;
+    }
+    return outboxWriteAll(keep, (size_t)((buf + len) - keep));
+}
+
+bool storeOutboxAppend(const char* line) {
+    char buf[STORE_OUTBOX_MAX_BYTES + 1];
+    size_t len = 0, count = 0;
+    if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return false;
+
+    const size_t lineLen = strlen(line);
+    if (len + lineLen + 1 > sizeof(buf)) {
+        if (!trimOutbox(buf, len, count)) return false;
+        if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return false;
+    }
+    if (len + lineLen + 1 > sizeof(buf)) return false;
+
+    memcpy(buf + len, line, lineLen);
+    len += lineLen;
+    buf[len++] = '\n';
+    if (!outboxWriteAll(buf, len)) return false;
+
+    if (len > STORE_OUTBOX_MAX_BYTES || count + 1 > STORE_OUTBOX_MAX_LINES) {
+        trimOutbox(buf, len, count + 1);
+    }
+    return true;
+}
+
+size_t storeOutboxCount() {
+    char buf[STORE_OUTBOX_MAX_BYTES + 1];
+    size_t len = 0, count = 0;
+    if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return 0;
+    return count;
+}
+
+bool storeOutboxAckUpTo(uint32_t watermark) {
+    char buf[STORE_OUTBOX_MAX_BYTES + 1];
+    size_t len = 0, count = 0;
+    if (!outboxReadAll(buf, sizeof(buf), &len, &count)) return false;
+    if (count == 0) return true;
+
+    // Reescribir solo las lineas con client_id > watermark.
+    char out[STORE_OUTBOX_MAX_BYTES + 1];
+    size_t outLen = 0;
+    size_t start = 0;
+    for (size_t i = 0; i <= len; ++i) {
+        if (i == len || buf[i] == '\n') {
+            const size_t lineLen = i - start;
+            if (lineLen > 0) {
+                const uint32_t id = lineClientId(buf + start, lineLen);
+                if (id > watermark) {
+                    if (outLen + lineLen + 1 > sizeof(out)) return false;
+                    memcpy(out + outLen, buf + start, lineLen);
+                    outLen += lineLen;
+                    out[outLen++] = '\n';
+                }
+            }
+            start = i + 1;
+        }
+    }
+    return outboxWriteAll(out, outLen);
+}
+
+void storeOutboxClear() {
+    outboxWriteAll("", 0);
+}
+
+size_t storeOutboxUsedBytes() {
+    size_t size = 0;
+    outboxFileSize(&size);
+    return size;
+}
+
+// ----------------------------------------------------------------------------
+// Inicializacion y restablecimiento
+// ----------------------------------------------------------------------------
+void storeInit(const char* storagePath) {
+#if defined(STORE_BACKEND_FILE)
+    if (storagePath) {
+        strncpy(s_dir, storagePath, sizeof(s_dir) - 1);
+        s_dir[sizeof(s_dir) - 1] = '\0';
+    }
+#if defined(_WIN32)
+    _mkdir(s_dir);
+#else
+    mkdir(s_dir, 0755);
+#endif
+#else
+    LittleFS.begin(true);
+#endif
+}
+
+void storeFactoryReset() {
+#if defined(STORE_BACKEND_FILE)
+    char path[160];
+    blobPath(path, sizeof(path), "cur");
+    remove(path);
+    blobPath(path, sizeof(path), "prev");
+    remove(path);
+    outboxWriteAll("", 0);
+#else
+    s_prefs.begin(NVS_NS, false);
+    s_prefs.clear();
+    s_prefs.end();
+    LittleFS.remove(OUTBOX_PATH);
+#endif
+}

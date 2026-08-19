@@ -51,6 +51,7 @@ enum class RelayRole : uint8_t {
 };
 
 void hwRelayInit();                        // estado seguro: todos apagados
+void hwRelaySetZoneCounts(uint8_t substrate, uint8_t sprinkler);  // antes de hwRelayInit
 void hwRelayAllOff();
 void hwRelaySet(RelayRole role, uint8_t zone, bool active);
 bool hwRelayGet(RelayRole role, uint8_t zone);
@@ -112,5 +113,6 @@ void hwCalibrationInit();
 ZoneCalibration hwCalibrationGet(uint8_t zone);
 void hwCalibrationSet(uint8_t zone, const ZoneCalibration& cal);
 bool hwCalibrationIsCalibrated(uint8_t zone);
+void hwCalibrationClearAll();              // restablecimiento a fabrica
 
 #endif // HARDWARE_H

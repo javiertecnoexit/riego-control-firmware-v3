@@ -223,6 +223,14 @@ static const uint8_t RELAY_PIN_ALARM = PIN_RELAY_ALARM;
 static uint8_t s_substrateZones = DEFAULT_SUBSTRATE_ZONES;
 static uint8_t s_sprinklerZones = DEFAULT_SPRINKLER_ZONES;
 
+void hwRelaySetZoneCounts(uint8_t substrate, uint8_t sprinkler) {
+    if (substrate > MAX_SUBSTRATE_ZONES) substrate = MAX_SUBSTRATE_ZONES;
+    if (substrate < 1) substrate = 1;
+    if (sprinkler > MAX_SPRINKLER_ZONES) sprinkler = MAX_SPRINKLER_ZONES;
+    s_substrateZones = substrate;
+    s_sprinklerZones = sprinkler;
+}
+
 static bool s_relayStateSubstrate[MAX_SUBSTRATE_ZONES] = { false };
 static bool s_relayStateSprinkler[MAX_SPRINKLER_ZONES] = { false };
 static bool s_relayStateAlarm = false;
@@ -458,6 +466,13 @@ void hwCalibrationSet(uint8_t zone, const ZoneCalibration& cal) {
 
 bool hwCalibrationIsCalibrated(uint8_t zone) {
     return hwCalibrationGet(zone).calibrated;
+}
+
+void hwCalibrationClearAll() {
+    Preferences prefs;
+    prefs.begin(NVS_CALIB, false);
+    prefs.clear();
+    prefs.end();
 }
 
 // ----------------------------------------------------------------------------

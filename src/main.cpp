@@ -3,7 +3,9 @@
 
 #include "config.h"
 #include "hardware.h"
+#include "portal.h"
 #include "rules.h"
+#include "store.h"
 
 // ============================================================================
 // main.cpp — Orquestacion V3 (estructura reducida, P8).
@@ -76,9 +78,10 @@ static uint8_t s_substrateMinHumidity[MAX_SUBSTRATE_ZONES] = {
     DEFAULT_MIN_HUMIDITY, DEFAULT_MIN_HUMIDITY, DEFAULT_MIN_HUMIDITY, DEFAULT_MIN_HUMIDITY
 };
 
-// Conteo local de zonas (defaults de fabrica hasta Fase 2 / portal).
+// Conteo local de zonas y ciclo (defaults de fabrica hasta aplicar config).
 static uint8_t s_substrateZones = DEFAULT_SUBSTRATE_ZONES;
 static uint8_t s_sprinklerZones = DEFAULT_SPRINKLER_ZONES;
+static uint32_t s_localCycleMs = LOCAL_CYCLE_MS;
 
 static ZoneRuntimeState* getState(ZoneType type, uint8_t zone) {
     if (type == ZoneType::SUBSTRATE) {
@@ -567,7 +570,7 @@ static SensorReadings s_lastReadings = {};
 
 static void localCycleUpdate() {
     const uint32_t now = millis();
-    if ((now - s_lastTickMs) < LOCAL_CYCLE_MS) return;
+    if ((now - s_lastTickMs) < s_localCycleMs) return;
     s_lastTickMs = now;
     s_cycleCount++;
 
@@ -588,6 +591,7 @@ static void enterConfigSafely() {
     hwRelayAllOff();
     manualUiForceIdle();
     stateMachineEnterConfig();
+    portalStart();
 }
 
 void setup() {
@@ -600,6 +604,22 @@ void setup() {
     esp_task_wdt_init(10, true);
     esp_task_wdt_add(NULL);
 
+    // Boot deterministico: config guardada (snapshot) antes de encender nada.
+    storeInit(NULL);
+    const DeviceConfig cfg = storeConfigLoad();
+    s_substrateZones = cfg.substrateZones;
+    s_sprinklerZones = cfg.sprinklerZones;
+    s_localCycleMs = (uint32_t)cfg.readIntervalS * 1000UL;
+    if (storeHasValidConfig()) {
+        Serial.printf("[STORE] Config aplicada v%lu: %u sustrato, %u aspiracion, "
+                      "ciclo %lu ms\n",
+                      (unsigned long)cfg.version, cfg.substrateZones,
+                      cfg.sprinklerZones, (unsigned long)s_localCycleMs);
+    } else {
+        Serial.println("[STORE] Sin config valida: defaults de fabrica");
+    }
+
+    hwRelaySetZoneCounts(s_substrateZones, s_sprinklerZones);
     hwRelayInit();
     hwRtcInit();
     hwButtonsInit();
@@ -642,9 +662,14 @@ void loop() {
                                 alarmIsActive(), alarmGetActiveCondition());
         }
     } else {
-        // Modo Configuracion: el portal llega en Fase 2. Por ahora solo se
-        // muestra la pantalla y se espera el timeout para reiniciar.
+        // Modo Configuracion: portal cautivo (P1) en 192.168.4.1.
+        portalHandle();
         hwDisplayShowConfig("192.168.4.1");
+        if (portalSavedAndReadyToReboot()) {
+            Serial.println("[STATE] Configuracion guardada -> reinicio");
+            stateMachineRestart();
+            return;
+        }
         if (millis() >= CONFIG_TIMEOUT_MS) {
             stateMachineRestart();
         }
