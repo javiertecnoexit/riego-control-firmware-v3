@@ -1,0 +1,9 @@
+# PlatformIO
+.pio/
+.vscode/
+*.swp
+*.swo
+
+# Archivos locales
+*.local
+secret*.json
