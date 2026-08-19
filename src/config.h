@@ -119,6 +119,22 @@ enum class OperationMode : uint8_t {
 #define CLOUD_HTTP_TIMEOUT_MS   10000UL
 #define MAX_TELEMETRY_READINGS  128
 
+#define NET_TASK_LOOP_MS        200UL      // periodo de la tarea de red
+#define NET_TASK_STACK_SIZE     8192UL
+#define NET_TASK_PRIORITY       1          // baja: no compite con el control
+#define NET_WIFI_RETRY_MS       5000UL     // reintento de conexion WiFi
+#define NET_WS_RECONNECT_MS     5000UL     // reconexion WS (fija, simplificada)
+#define NET_WS_KEEPALIVE_MS     120000UL   // sin mensajes de la nube -> reconectar
+#define NET_OUTBOX_BATCH_MAX    32u        // lineas maximas por lote POST
+#define NET_OUTBOX_BATCH_BYTES  4096u      // cuerpo maximo del lote POST
+#define NET_CONN_EVALUATE_MS    90000UL    // P3: definir OK/FAIL de conexion inicial
+#define NET_COMMAND_RING_SIZE   16u        // dedupe de command_id en sesion
+#define NET_COMMAND_QUEUE_LEN   8          // cola de comandos cloud -> main
+#define NET_FLUSH_QUEUE_LEN     4          // cola de pedidos de subida
+
+#define PROTOCOL_VERSION        1u
+#define FIRMWARE_VERSION        "3.0.0-dev"
+
 // ----------------------------------------------------------------------------
 // Relé — polaridad
 // ----------------------------------------------------------------------------

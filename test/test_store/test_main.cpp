@@ -202,6 +202,27 @@ void test_factory_reset_clears_everything() {
     TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)storeOutboxCount());
 }
 
+void test_outbox_read_line() {
+    TEST_ASSERT_TRUE(storeOutboxAppend("{\"client_id\":1,\"type\":\"a\"}"));
+    TEST_ASSERT_TRUE(storeOutboxAppend("{\"client_id\":2,\"type\":\"b\"}"));
+    TEST_ASSERT_TRUE(storeOutboxAppend("{\"client_id\":3,\"type\":\"c\"}"));
+
+    char line[128];
+    TEST_ASSERT_TRUE(storeOutboxReadLine(0, line, sizeof(line)));
+    TEST_ASSERT_EQUAL_STRING("{\"client_id\":1,\"type\":\"a\"}", line);
+    TEST_ASSERT_TRUE(storeOutboxReadLine(2, line, sizeof(line)));
+    TEST_ASSERT_EQUAL_STRING("{\"client_id\":3,\"type\":\"c\"}", line);
+    TEST_ASSERT_FALSE(storeOutboxReadLine(3, line, sizeof(line)));   // fuera de rango
+    TEST_ASSERT_FALSE(storeOutboxReadLine(0, line, 4));              // buffer chico
+}
+
+void test_next_client_id_monotonic_across_reinit() {
+    TEST_ASSERT_EQUAL_UINT32(1, storeNextClientId());
+    TEST_ASSERT_EQUAL_UINT32(2, storeNextClientId());
+    storeInit(TMP_DIR);   // reinicio simulado: el watermark persiste
+    TEST_ASSERT_EQUAL_UINT32(3, storeNextClientId());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_are_preloaded_but_not_applicable);
@@ -215,5 +236,7 @@ int main(int, char**) {
     RUN_TEST(test_outbox_persists_across_reinit);
     RUN_TEST(test_outbox_cap_trims_oldest);
     RUN_TEST(test_factory_reset_clears_everything);
+    RUN_TEST(test_outbox_read_line);
+    RUN_TEST(test_next_client_id_monotonic_across_reinit);
     return UNITY_END();
 }

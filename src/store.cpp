@@ -17,10 +17,23 @@
 #if defined(_WIN32)
 #include <direct.h>
 #endif
+#define STORE_LOCK()   ((void)0)
+#define STORE_UNLOCK() ((void)0)
 #else
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <Preferences.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+// La tarea de red (net) y el loop principal comparten el outbox: se protege
+// cada operacion con un mutex (creado en storeInit).
+static SemaphoreHandle_t s_storeMutex = NULL;
+static void storeLock() {
+    if (s_storeMutex) xSemaphoreTake(s_storeMutex, portMAX_DELAY);
+}
+static void storeUnlock() {
+    if (s_storeMutex) xSemaphoreGive(s_storeMutex);
+}
 #endif
 
 static const uint32_t SCHEMA_VERSION = STORE_CFG_SCHEMA_VERSION;
@@ -96,17 +109,21 @@ static bool blobWrite(const char* name, const DeviceConfig& cfg) {
     const uint32_t schema = SCHEMA_VERSION;
     memcpy(blob + 4, &schema, 4);
     memcpy(blob + 8, &cfg, sizeof(cfg));
+    storeLock();
     s_prefs.begin(NVS_NS, false);
     const size_t n = s_prefs.putBytes(name, blob, sizeof(blob));
     s_prefs.end();
+    storeUnlock();
     return n == sizeof(blob);
 }
 
 static bool blobRead(const char* name, DeviceConfig& cfg) {
     uint8_t blob[sizeof(uint32_t) * 2 + sizeof(DeviceConfig)];
+    storeLock();
     s_prefs.begin(NVS_NS, true);
     const size_t n = s_prefs.getBytes(name, blob, sizeof(blob));
     s_prefs.end();
+    storeUnlock();
     if (n != sizeof(blob)) return false;
     uint32_t crc, schema;
     memcpy(&crc, blob, 4);
@@ -173,11 +190,21 @@ static bool outboxFileSize(size_t* outSize) {
 static const char* OUTBOX_PATH = "/outbox.jsonl";
 
 static bool outboxReadAll(char* buf, size_t cap, size_t* outLen, size_t* outCount) {
-    if (!LittleFS.exists(OUTBOX_PATH)) return true;
-    File f = LittleFS.open(OUTBOX_PATH, "r");
-    if (!f) return true;
-    const size_t n = f.readBytes(buf, cap - 1);
-    f.close();
+    storeLock();
+    const bool exists = LittleFS.exists(OUTBOX_PATH);
+    bool ok = true;
+    size_t n = 0;
+    if (exists) {
+        File f = LittleFS.open(OUTBOX_PATH, "r");
+        if (f) {
+            n = f.readBytes(buf, cap - 1);
+            f.close();
+        } else {
+            ok = false;
+        }
+    }
+    storeUnlock();
+    if (!ok) return false;
     buf[n] = '\0';
     *outLen = n;
     size_t count = 0;
@@ -189,25 +216,33 @@ static bool outboxReadAll(char* buf, size_t cap, size_t* outLen, size_t* outCoun
 }
 
 static bool outboxWriteAll(const char* buf, size_t len) {
+    storeLock();
     File f = LittleFS.open(OUTBOX_PATH, "w");
-    if (!f) return false;
-    const size_t written = f.write((const uint8_t*)buf, len);
-    f.close();
-    return written == len;
+    bool ok = false;
+    if (f) {
+        ok = f.write((const uint8_t*)buf, len) == len;
+        f.close();
+    }
+    storeUnlock();
+    return ok;
 }
 
 static bool outboxFileSize(size_t* outSize) {
-    if (!LittleFS.exists(OUTBOX_PATH)) {
-        *outSize = 0;
-        return true;
+    storeLock();
+    bool ok = true;
+    size_t size = 0;
+    if (LittleFS.exists(OUTBOX_PATH)) {
+        File f = LittleFS.open(OUTBOX_PATH, "r");
+        if (f) {
+            size = (size_t)f.size();
+            f.close();
+        } else {
+            ok = false;
+        }
     }
-    File f = LittleFS.open(OUTBOX_PATH, "r");
-    if (!f) {
-        *outSize = 0;
-        return true;
-    }
-    *outSize = (size_t)f.size();
-    f.close();
+    storeUnlock();
+    if (!ok) return false;
+    *outSize = size;
     return true;
 }
 
@@ -418,6 +453,84 @@ size_t storeOutboxUsedBytes() {
     return size;
 }
 
+bool storeOutboxReadLine(size_t index, char* buf, size_t cap) {
+    char all[STORE_OUTBOX_MAX_BYTES + 1];
+    size_t len = 0, count = 0;
+    if (!outboxReadAll(all, sizeof(all), &len, &count)) return false;
+    if (index >= count) return false;
+    size_t start = 0;
+    size_t found = 0;
+    for (size_t i = 0; i <= len && found <= index; ++i) {
+        if (i == len || all[i] == '\n') {
+            if (found == index) {
+                const size_t lineLen = i - start;
+                if (lineLen == 0 || lineLen >= cap) return false;
+                memcpy(buf, all + start, lineLen);
+                buf[lineLen] = '\0';
+                return true;
+            }
+            found++;
+            start = i + 1;
+        }
+    }
+    return false;
+}
+
+// ----------------------------------------------------------------------------
+// Watermark de client_id (monotono entre reinicios)
+// ----------------------------------------------------------------------------
+#if defined(STORE_BACKEND_FILE)
+
+static uint32_t wmarkRead() {
+    char path[160];
+    blobPath(path, sizeof(path), "wmark");
+    uint32_t v = 0;
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+    const size_t n = fread(&v, 1, 4, f);
+    fclose(f);
+    return (n == 4) ? v : 0;
+}
+
+static bool wmarkWrite(uint32_t v) {
+    char path[160];
+    blobPath(path, sizeof(path), "wmark");
+    FILE* f = fopen(path, "wb");
+    if (!f) return false;
+    const size_t n = fwrite(&v, 1, 4, f);
+    fclose(f);
+    return n == 4;
+}
+
+#else
+
+static uint32_t wmarkRead() {
+    storeLock();
+    s_prefs.begin(NVS_NS, true);
+    const uint32_t v = s_prefs.getUInt("wmark", 0);
+    s_prefs.end();
+    storeUnlock();
+    return v;
+}
+
+static bool wmarkWrite(uint32_t v) {
+    storeLock();
+    s_prefs.begin(NVS_NS, false);
+    const bool ok = s_prefs.putUInt("wmark", v);
+    s_prefs.end();
+    storeUnlock();
+    return ok;
+}
+
+#endif
+
+uint32_t storeNextClientId() {
+    uint32_t v = wmarkRead();
+    const uint32_t next = (v == UINT32_MAX) ? 1u : v + 1u;
+    if (!wmarkWrite(next)) return wmarkRead() + 1u;   // reintento unico
+    return next;
+}
+
 // ----------------------------------------------------------------------------
 // Inicializacion y restablecimiento
 // ----------------------------------------------------------------------------
@@ -437,6 +550,7 @@ void storeInit(const char* storagePath) {
     // formatOnFail=true: formatea si el primer montaje encuentra basura (particion
     // nueva); el outbox es una cola tolerante a perdida.
     LittleFS.begin(true, "/littlefs", 10, "spiffs");
+    if (!s_storeMutex) s_storeMutex = xSemaphoreCreateMutex();
 #endif
 }
 
@@ -447,11 +561,15 @@ void storeFactoryReset() {
     remove(path);
     blobPath(path, sizeof(path), "prev");
     remove(path);
+    blobPath(path, sizeof(path), "wmark");
+    remove(path);
     outboxWriteAll("", 0);
 #else
+    storeLock();
     s_prefs.begin(NVS_NS, false);
     s_prefs.clear();
     s_prefs.end();
     LittleFS.remove(OUTBOX_PATH);
+    storeUnlock();
 #endif
 }

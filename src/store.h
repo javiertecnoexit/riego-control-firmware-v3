@@ -58,6 +58,12 @@ bool     storeOutboxAckUpTo(uint32_t watermark);
 void     storeOutboxClear();
 size_t   storeOutboxUsedBytes();
 
+// Lee la linea i (0-based) sin modificarla; false si no existe o es muy larga.
+bool     storeOutboxReadLine(size_t index, char* buf, size_t cap);
+
+// Siguiente client_id monotono, persistido entre reinicios (watermark).
+uint32_t storeNextClientId();
+
 // ----------------------------------------------------------------------------
 // General
 // ----------------------------------------------------------------------------

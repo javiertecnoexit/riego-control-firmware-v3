@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "hardware.h"
+#include "net.h"
 #include "portal.h"
 #include "rules.h"
 #include "store.h"
@@ -78,6 +79,10 @@ static uint8_t s_substrateMinHumidity[MAX_SUBSTRATE_ZONES] = {
     DEFAULT_MIN_HUMIDITY, DEFAULT_MIN_HUMIDITY, DEFAULT_MIN_HUMIDITY, DEFAULT_MIN_HUMIDITY
 };
 
+// Duracion por override remoto (0 = no definida); precede a la manual.
+static uint16_t s_substrateOverrideDuration[MAX_SUBSTRATE_ZONES] = { 0 };
+static uint16_t s_sprinklerOverrideDuration[MAX_SPRINKLER_ZONES] = { 0 };
+
 // Conteo local de zonas y ciclo (defaults de fabrica hasta aplicar config).
 static uint8_t s_substrateZones = DEFAULT_SUBSTRATE_ZONES;
 static uint8_t s_sprinklerZones = DEFAULT_SPRINKLER_ZONES;
@@ -137,13 +142,22 @@ static int64_t* getLastScheduleMinute(ZoneType type, uint8_t zone) {
     return &s_sprinklerLastScheduleMinute[zone];
 }
 
+// Definida mas abajo (eventos al outbox, Fase 3); usada por applyTransition.
+static void outboxEvent(const char* eventType, const char* jsonExtra);
+
 static uint16_t durationFor(ZoneType type, uint8_t zone) {
     if (type == ZoneType::SUBSTRATE) {
         if (zone >= MAX_SUBSTRATE_ZONES) return DEFAULT_IRRIGATION_S;
+        if (s_substrateOverrideDuration[zone] > 0) {
+            return s_substrateOverrideDuration[zone];
+        }
         return s_substrateDurationSet[zone] ? s_substrateDuration[zone]
                                             : DEFAULT_IRRIGATION_S;
     }
     if (zone >= MAX_SPRINKLER_ZONES) return DEFAULT_IRRIGATION_S;
+    if (s_sprinklerOverrideDuration[zone] > 0) {
+        return s_sprinklerOverrideDuration[zone];
+    }
     return s_sprinklerDurationSet[zone] ? s_sprinklerDuration[zone]
                                         : DEFAULT_IRRIGATION_S;
 }
@@ -256,6 +270,13 @@ static bool applyTransition(
         Serial.printf("[IRRIG] Zona %s%u START trigger=%d dur=%lums\n",
                       type == ZoneType::SUBSTRATE ? "S" : "A", zone,
                       (int)tr.trigger, (unsigned long)state->durationMs);
+        char evExtra[160];
+        snprintf(evExtra, sizeof(evExtra),
+                 "\"zone_type\":\"%s\",\"zone_index\":%u,\"trigger\":%d,"
+                 "\"duration_s\":%u",
+                 type == ZoneType::SUBSTRATE ? "substrate" : "sprinkler",
+                 zone, (int)tr.trigger, tr.durationSeconds);
+        outboxEvent("irrigation_start", evExtra);
         return true;
     }
 
@@ -272,6 +293,12 @@ static bool applyTransition(
     Serial.printf("[IRRIG] Zona %s%u STOP trigger=%d\n",
                   type == ZoneType::SUBSTRATE ? "S" : "A", zone,
                   (int)finishedTrigger);
+    char evExtra[160];
+    snprintf(evExtra, sizeof(evExtra),
+             "\"zone_type\":\"%s\",\"zone_index\":%u,\"trigger\":%d",
+             type == ZoneType::SUBSTRATE ? "substrate" : "sprinkler",
+             zone, (int)finishedTrigger);
+    outboxEvent("irrigation_stop", evExtra);
     return true;
 }
 
@@ -410,6 +437,129 @@ static ZoneRuntimeState irrigationGetState(ZoneType type, uint8_t zone) {
 }
 
 // ----------------------------------------------------------------------------
+// Eventos y telemetria al outbox (Fase 3): at-least-once via watermark.
+// Una linea por medicion/evento, con client_id monotono persistido.
+// ----------------------------------------------------------------------------
+static void sanitizeJsonStr(const char* in, char* out, size_t cap) {
+    size_t o = 0;
+    for (const char* p = in; *p != '\0' && o + 6 < cap; ++p) {
+        if (*p == '"' || *p == '\\') {
+            out[o++] = '\\';
+            out[o++] = *p;
+        } else {
+            out[o++] = *p;
+        }
+    }
+    out[o] = '\0';
+}
+
+static void isoNow(char* out, size_t cap) {
+    const struct tm t = hwRtcNow();
+    snprintf(out, cap, "%04d-%02d-%02dT%02d:%02d:%02dZ",
+             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+             t.tm_hour, t.tm_min, t.tm_sec);
+}
+
+static void outboxEvent(const char* eventType, const char* jsonExtra) {
+    char alias[80];
+    sanitizeJsonStr(storeConfigLoad().deviceAlias, alias, sizeof(alias));
+    char ts[32];
+    isoNow(ts, sizeof(ts));
+    char line[512];
+    if (jsonExtra && jsonExtra[0]) {
+        snprintf(line, sizeof(line),
+                 "{\"client_id\":%lu,\"device_alias\":\"%s\",\"event_type\":\"%s\","
+                 "\"recorded_at\":\"%s\",%s}",
+                 (unsigned long)storeNextClientId(), alias, eventType, ts,
+                 jsonExtra);
+    } else {
+        snprintf(line, sizeof(line),
+                 "{\"client_id\":%lu,\"device_alias\":\"%s\",\"event_type\":\"%s\","
+                 "\"recorded_at\":\"%s\"}",
+                 (unsigned long)storeNextClientId(), alias, eventType, ts);
+    }
+    storeOutboxAppend(line);
+}
+
+static void telemetryEnqueue(const SensorReadings& readings) {
+    char extra[192];
+    for (uint8_t z = 0; z < s_substrateZones; ++z) {
+        if (readings.soil[z].valid) {
+            snprintf(extra, sizeof(extra),
+                     "\"zone_type\":\"substrate\",\"zone_index\":%u,"
+                     "\"reading_type\":\"soil_humidity\",\"value\":%.1f",
+                     z, readings.soil[z].humidityPct);
+            outboxEvent("reading", extra);
+        }
+        if (readings.soilTemp[z].valid) {
+            snprintf(extra, sizeof(extra),
+                     "\"zone_type\":\"substrate\",\"zone_index\":%u,"
+                     "\"reading_type\":\"soil_temp\",\"value\":%.1f",
+                     z, readings.soilTemp[z].tempC);
+            outboxEvent("reading", extra);
+        }
+    }
+    if (readings.air.valid) {
+        snprintf(extra, sizeof(extra),
+                 "\"reading_type\":\"air_temp\",\"value\":%.1f",
+                 readings.air.tempC);
+        outboxEvent("reading", extra);
+        snprintf(extra, sizeof(extra),
+                 "\"reading_type\":\"air_humidity\",\"value\":%.1f",
+                 readings.air.humidityPct);
+        outboxEvent("reading", extra);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Comandos remotos (downlink): la tarea de red solo encola; aqui se aplican
+// como override/stop en la evaluacion del control (nunca toca relays la red).
+// ----------------------------------------------------------------------------
+static void applyRemoteCommand(const NetCommand& cmd) {
+    const ZoneType type = (cmd.zoneType == 0) ? ZoneType::SUBSTRATE
+                                              : ZoneType::SPRINKLER;
+    const char* typeName = (type == ZoneType::SUBSTRATE) ? "S" : "A";
+
+    if (cmd.action == 1) {
+        bool* overridePending = getOverridePending(type, cmd.zone);
+        if (!overridePending) return;
+        *overridePending = true;
+        if (type == ZoneType::SUBSTRATE) {
+            s_substrateOverrideDuration[cmd.zone] = cmd.durationS;
+        } else {
+            s_sprinklerOverrideDuration[cmd.zone] = cmd.durationS;
+        }
+        Serial.printf("[NET] Override remoto zona %s%u activado (%us)\n",
+                      typeName, cmd.zone, cmd.durationS);
+        return;
+    }
+
+    // off: cortar ahora y limpiar el override pendiente.
+    bool* overridePending = getOverridePending(type, cmd.zone);
+    if (overridePending) *overridePending = false;
+    if (type == ZoneType::SUBSTRATE) {
+        s_substrateOverrideDuration[cmd.zone] = 0;
+    } else {
+        s_sprinklerOverrideDuration[cmd.zone] = 0;
+    }
+    ZoneRuntimeState* st = getState(type, cmd.zone);
+    if (st && st->active) {
+        const IrrigationTransition stop = riego::domain::decideIrrigationTransition(
+            toDomainRuntime(*st), IrrigationCandidate{IrrigationTrigger::NONE, 0, -1}, 0
+        );
+        applyTransition(type, cmd.zone, stop, hwRtcNow());
+    }
+    Serial.printf("[NET] Comando remoto OFF zona %s%u aplicado\n", typeName, cmd.zone);
+}
+
+static void drainRemoteCommands() {
+    NetCommand cmd;
+    while (netTakeCommand(&cmd)) {
+        applyRemoteCommand(cmd);
+    }
+}
+
+// ----------------------------------------------------------------------------
 // UI de riego manual (P2: el primer pulso del selector ABRE el menu en
 // pantalla; se fuerza el redibujado inmediato, corrigiendo el bug de V2).
 // ----------------------------------------------------------------------------
@@ -494,7 +644,7 @@ static struct tm s_alarmStartedAt = {};
 static float s_alarmMaxTemp = -1.0f;   // -1 = usar default de fabrica
 static float s_alarmMinTemp = -1.0f;
 static uint16_t s_persistentLowCycles[MAX_SUBSTRATE_ZONES] = { 0 };
-static int64_t s_lastBackendSeenEpoch = 0;   // Fase 3 la actualiza
+// Ultimo contacto con el backend: lo actualiza la tarea de red (Fase 3).
 
 static float alarmMaxTempEffective() {
     return (s_alarmMaxTemp >= 0.0f) ? s_alarmMaxTemp : DEFAULT_ALARM_MAX_TEMP;
@@ -528,8 +678,8 @@ static void alarmEvaluate(const struct tm& now, const SensorReadings& readings) 
         newCondition = AlarmCondition::AIR_TEMP_HIGH;
     } else if (readings.air.valid && readings.air.tempC < alarmMinTempEffective()) {
         newCondition = AlarmCondition::AIR_TEMP_LOW;
-    } else if (s_lastBackendSeenEpoch > 0 &&
-               (hwRtcTmToEpoch(now) - s_lastBackendSeenEpoch) >=
+    } else if (netLastBackendSeenEpoch() > 0 &&
+               (hwRtcTmToEpoch(now) - netLastBackendSeenEpoch()) >=
                    (int64_t)ALARM_NO_CONNECTION_SEC) {
         newCondition = AlarmCondition::NO_CONNECTION_60MIN;
     } else if (alarmCheckPersistentLow(readings)) {
@@ -546,6 +696,9 @@ static void alarmEvaluate(const struct tm& now, const SensorReadings& readings) 
         Serial.printf("[ALARM] %s condition=%d\n",
                       shouldBeActive ? "ACTIVADA" : "DESACTIVADA",
                       (int)newCondition);
+        char evExtra[64];
+        snprintf(evExtra, sizeof(evExtra), "\"condition\":%d", (int)newCondition);
+        outboxEvent(shouldBeActive ? "alarm" : "alarm_cleared", evExtra);
     } else if (s_alarmActive && newCondition != s_activeCondition) {
         s_activeCondition = newCondition;
         s_alarmStartedAt = now;
@@ -578,6 +731,8 @@ static void localCycleUpdate() {
     hwSensorsPrint(readings);
     s_lastReadings = readings;
 
+    telemetryEnqueue(readings);
+
     const struct tm tmNow = hwRtcNow();
     irrigationEvaluate(tmNow, readings);
     alarmEvaluate(tmNow, readings);
@@ -586,6 +741,22 @@ static void localCycleUpdate() {
 // ----------------------------------------------------------------------------
 // setup / loop
 // ----------------------------------------------------------------------------
+static uint32_t s_uploadIntervalMs = DEFAULT_UPLOAD_INTERVAL_S * 1000UL;
+static uint32_t s_lastFlushMs = 0;
+
+static void reloadRuntimeConfig() {
+    const DeviceConfig cfg = storeConfigLoad();
+    s_substrateZones = cfg.substrateZones;
+    s_sprinklerZones = cfg.sprinklerZones;
+    s_localCycleMs = (uint32_t)cfg.readIntervalS * 1000UL;
+    s_uploadIntervalMs = (uint32_t)cfg.uploadIntervalS * 1000UL;
+    Serial.printf("[STATE] Config recargada en runtime: %u sustrato, "
+                  "%u aspiracion, ciclo %lu ms, subida %lu ms\n",
+                  s_substrateZones, s_sprinklerZones,
+                  (unsigned long)s_localCycleMs,
+                  (unsigned long)s_uploadIntervalMs);
+}
+
 static void enterConfigSafely() {
     irrigationStopAll();
     hwRelayAllOff();
@@ -626,6 +797,9 @@ void setup() {
     hwDisplayInit();
     hwSensorsInit();
 
+    s_uploadIntervalMs = (uint32_t)cfg.uploadIntervalS * 1000UL;
+    s_lastFlushMs = millis();
+
     for (uint8_t z = 0; z < MAX_SUBSTRATE_ZONES; z++) {
         s_substrateState[z] = {};
         s_sprinklerState[z] = {};
@@ -633,9 +807,11 @@ void setup() {
         s_sprinklerLastScheduleMinute[z] = -1;
     }
 
-    // P3: la conexion inicial se define cuando exista la capa de red (Fase 3);
-    // hasta entonces la pantalla muestra "R:-".
+    // P3: la conexion inicial la define la tarea de red (Fase 3); hasta
+    // entonces la pantalla muestra "R:-".
     hwDisplaySetConnStatus(ConnStatus::PENDING);
+
+    netInit();
 
     s_lastTickMs = millis();
 }
@@ -650,9 +826,21 @@ void loop() {
             return;
         }
 
+        if (netConfigReloadPending()) {
+            netClearConfigReload();
+            reloadRuntimeConfig();
+        }
+
+        drainRemoteCommands();         // downlink: overrides/stop (Fase 3)
         manualUiUpdate();              // responde al instante a Selector/Confirmar
         irrigationServiceTimeouts();   // apagado por duracion en cada pasada
         localCycleUpdate();            // 30 s: sensores + riego + alarma
+
+        // Subida del outbox cada uploadIntervalS (Fase 3).
+        if ((millis() - s_lastFlushMs) >= s_uploadIntervalMs) {
+            s_lastFlushMs = millis();
+            netRequestFlush();
+        }
 
         if (!s_selecting) {
             const struct tm t = hwRtcNowLocal();
