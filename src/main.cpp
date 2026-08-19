@@ -375,8 +375,15 @@ static bool irrigationManualToggle(ZoneType type, uint8_t zone) {
             applyTransition(type, zone, stop, now);
         }
         *manualActive = true;
-        // El arranque se materializa en la proxima evaluacion del ciclo.
-        Serial.printf("[IRRIG] Manual zona %s%u ON (ciclo local)\n",
+        // Arranque INMEDIATO del relay (sin esperar el proximo ciclo local).
+        const IrrigationCandidate cand = {
+            IrrigationTrigger::MANUAL, (uint16_t)(durationMs / 1000UL), -1
+        };
+        const IrrigationTransition tr = riego::domain::decideIrrigationTransition(
+            toDomainRuntime(*state), cand, 0
+        );
+        applyTransition(type, zone, tr, now);
+        Serial.printf("[IRRIG] Manual zona %s%u ON inmediato (relay)\n",
                       type == ZoneType::SUBSTRATE ? "S" : "A", zone);
         return true;
     }
