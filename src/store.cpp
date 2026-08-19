@@ -434,7 +434,9 @@ void storeInit(const char* storagePath) {
 #endif
 #else
     // Particion "spiffs" (subtipo spiffs) de partitions/no_ota_with_littlefs.csv.
-    LittleFS.begin(false, "/littlefs", 10, "spiffs");
+    // formatOnFail=true: formatea si el primer montaje encuentra basura (particion
+    // nueva); el outbox es una cola tolerante a perdida.
+    LittleFS.begin(true, "/littlefs", 10, "spiffs");
 #endif
 }
 
