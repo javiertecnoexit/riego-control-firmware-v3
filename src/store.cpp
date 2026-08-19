@@ -433,9 +433,8 @@ void storeInit(const char* storagePath) {
     mkdir(s_dir, 0755);
 #endif
 #else
-    // La particion se llama "littlefs" en partitions/no_ota_with_littlefs.csv;
-    // LittleFS.begin() por defecto busca la etiqueta "spiffs".
-    LittleFS.begin(false, "/littlefs", 10, "littlefs");
+    // Particion "spiffs" (subtipo spiffs) de partitions/no_ota_with_littlefs.csv.
+    LittleFS.begin(false, "/littlefs", 10, "spiffs");
 #endif
 }
 
