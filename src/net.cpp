@@ -420,17 +420,15 @@ static void handleCommand(JsonDocument& doc) {
 static void handleConfig(JsonDocument& doc) {
     DeviceConfig cfg = s_cfg;
     cfg.version = doc["version"] | (s_cfg.version + 1u);
-    // Campos omitidos: conservan el valor actual (los demas campos ya usan
-    // `| cfg.<campo>` abajo). Esto permite un push parcial sin romper WiFi.
+    // Campos omitidos: conservan el valor actual (push parcial seguro).
     strncpy(cfg.ssid, doc["ssid"] | s_cfg.ssid, sizeof(cfg.ssid) - 1);
     strncpy(cfg.wifiPass, doc["wifi_pass"] | s_cfg.wifiPass,
             sizeof(cfg.wifiPass) - 1);
-    strncpy(cfg.deviceAlias, doc["device_alias"] | "",
+    strncpy(cfg.deviceAlias, doc["device_alias"] | s_cfg.deviceAlias,
             sizeof(cfg.deviceAlias) - 1);
-    strncpy(cfg.apiUrl, doc["api_url"] | DEFAULT_API_URL,
-            sizeof(cfg.apiUrl) - 1);
-    strncpy(cfg.wsUrl, doc["ws_url"] | "", sizeof(cfg.wsUrl) - 1);
-    strncpy(cfg.apiKey, doc["api_key"] | "", sizeof(cfg.apiKey) - 1);
+    strncpy(cfg.apiUrl, doc["api_url"] | s_cfg.apiUrl, sizeof(cfg.apiUrl) - 1);
+    strncpy(cfg.wsUrl, doc["ws_url"] | s_cfg.wsUrl, sizeof(cfg.wsUrl) - 1);
+    strncpy(cfg.apiKey, doc["api_key"] | s_cfg.apiKey, sizeof(cfg.apiKey) - 1);
     cfg.substrateZones = (uint8_t)(doc["substrate_zones"] | cfg.substrateZones);
     cfg.sprinklerZones = (uint8_t)(doc["sprinkler_zones"] | cfg.sprinklerZones);
     cfg.readIntervalS = (uint16_t)(doc["read_interval_s"] | cfg.readIntervalS);
