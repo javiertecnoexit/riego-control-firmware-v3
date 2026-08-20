@@ -408,8 +408,10 @@ en httpFlush con lotes grandes.
 
 Estado: completa. Tag `v3.0.0` publicado en `main` (1d8d2c4) con el binario
 release flasheado y verificado en placa (build limpio, 32/32 tests nativos,
-config preservada, WS/POST operativos contra el mock). La entrega formal de la
-suite de conformidad al equipo cloud queda como accion externa del usuario
+config preservada, WS/POST operativos contra el mock). Refuerzo post-release
+anti-cuelgues (`netTask` en Task WDT, timeout 30 s) verificado en placa y
+etiquetado como `v3.0.1` (9fb2dbf). La entrega formal de la suite de
+conformidad al equipo cloud queda como accion externa del usuario
 (`tools/conformidad/` + README).
 
 ## 11. Decisiones
