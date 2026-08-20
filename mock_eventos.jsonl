@@ -1,0 +1,30 @@
+{"client_id": 491902, "device_alias": "suite-conformidad", "event_type": "reading", "recorded_at": "2026-08-20T02:11:41Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 42.5}
+{"client_id": 491903, "device_alias": "suite-conformidad", "event_type": "reading", "recorded_at": "2026-08-20T02:11:41Z", "reading_type": "air_temp", "value": 20.5}
+{"client_id": 491904, "device_alias": "suite-conformidad", "event_type": "irrigation_start", "recorded_at": "2026-08-20T02:11:41Z", "zone_type": "substrate", "zone_index": 0, "trigger": 3, "duration_s": 60}
+{"client_id": 44, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:22Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 46.0}
+{"client_id": 45, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:22Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_temp", "value": 19.6}
+{"client_id": 46, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:22Z", "reading_type": "air_temp", "value": 20.5}
+{"client_id": 47, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:22Z", "reading_type": "air_humidity", "value": 58.8}
+{"client_id": 48, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:52Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 45.4}
+{"client_id": 49, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:52Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_temp", "value": 19.6}
+{"client_id": 50, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:52Z", "reading_type": "air_temp", "value": 20.5}
+{"client_id": 51, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:42:52Z", "reading_type": "air_humidity", "value": 59.0}
+{"client_id": 52, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:43:51Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 45.5}
+{"client_id": 53, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:43:51Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_temp", "value": 19.6}
+{"client_id": 54, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:43:51Z", "reading_type": "air_temp", "value": 20.5}
+{"client_id": 55, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:43:51Z", "reading_type": "air_humidity", "value": 59.0}
+{"client_id": 56, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:21Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 45.1}
+{"client_id": 57, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:21Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_temp", "value": 19.6}
+{"client_id": 58, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:21Z", "reading_type": "air_temp", "value": 20.5}
+{"client_id": 59, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:21Z", "reading_type": "air_humidity", "value": 59.2}
+{"client_id": 60, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:51Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 45.5}
+{"client_id": 61, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:51Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_temp", "value": 19.6}
+{"client_id": 62, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:51Z", "reading_type": "air_temp", "value": 20.4}
+{"client_id": 63, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:44:51Z", "reading_type": "air_humidity", "value": 59.3}
+{"client_id": 64, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:45:21Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 44.8}
+{"client_id": 65, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:45:21Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_temp", "value": 19.6}
+{"client_id": 66, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:45:21Z", "reading_type": "air_temp", "value": 20.5}
+{"client_id": 67, "device_alias": "Prototipo_1", "event_type": "reading", "recorded_at": "2026-08-19T23:45:21Z", "reading_type": "air_humidity", "value": 59.4}
+{"client_id": 492129, "device_alias": "suite-conformidad", "event_type": "reading", "recorded_at": "2026-08-20T02:15:28Z", "zone_type": "substrate", "zone_index": 0, "reading_type": "soil_humidity", "value": 42.5}
+{"client_id": 492130, "device_alias": "suite-conformidad", "event_type": "reading", "recorded_at": "2026-08-20T02:15:28Z", "reading_type": "air_temp", "value": 20.5}
+{"client_id": 492131, "device_alias": "suite-conformidad", "event_type": "irrigation_start", "recorded_at": "2026-08-20T02:15:28Z", "zone_type": "substrate", "zone_index": 0, "trigger": 3, "duration_s": 60}

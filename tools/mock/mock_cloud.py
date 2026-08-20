@@ -3,18 +3,28 @@
 
 Simula el backend para probar el firmware sin dependencias externas:
   REST : http://0.0.0.0:8080
-         POST /eventos  -> recibe el lote JSON (array), lo guarda y responde 201
+         POST /eventos  -> recibe el lote JSON (array), deduplica por
+                           client_id y responde 2xx (idempotente)
+         GET  /eventos  -> devuelve todos los eventos almacenados
+                           (EXTENSION del mock; no es parte del contrato)
          GET  /health   -> {"ok": true}
   WS   : ws://0.0.0.0:8765
          hello -> hello_ok (con protocol_version)
-         ping  -> pong (texto)
-         Envia un comando de demostracion unos segundos despues de conectar:
+         ping  -> pong (JSON)
+         Envia ping JSON cada --ping-s segundos (keep-alive del contrato)
+         Envia un comando de demostracion unos segundos despues de conectar
+         (desactivable con --no-demo):
            {"type":"command","command_id":1,"zone":"S0","action":"on","duration_s":10}
            y luego el apagado del mismo comando.
+         Con --config-push-file <archivo.json>: envia ese objeto como
+         config push unos segundos despues del hello_ok (para probar
+         config_ack del dispositivo).
 
 Uso:
-    python tools/mock/mock_cloud.py            # puertos 8080 y 8765
-    python tools/mock/mock_cloud.py -p 9000 -w 9001
+    python tools/mock/mock_cloud.py                    # puertos 8080 y 8765
+    python tools/mock/mock_cloud.py -p 8081 -w 8766    # otros puertos
+    python tools/mock/mock_cloud.py --no-demo --ping-s 30
+    python tools/mock/mock_cloud.py --config-push-file push.json
 
 Los eventos recibidos se guardan en mock_eventos.jsonl (mismo directorio).
 """
@@ -33,10 +43,32 @@ import websockets
 
 EVENTS_FILE = "mock_eventos.jsonl"
 WS_DEMO_COMMAND_DELAY_S = 6
+WS_PING_DEFAULT_S = 30
+WS_CONFIG_PUSH_DELAY_S = 8
+
+_seen_client_ids = set()
+_events_lock = threading.Lock()
 
 
 def log(tag, msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {tag}: {msg}", flush=True)
+
+
+def _load_seen_ids():
+    try:
+        with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                    if isinstance(ev.get("client_id"), int):
+                        _seen_client_ids.add(ev["client_id"])
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        pass
 
 
 class EventosHandler(BaseHTTPRequestHandler):
@@ -51,6 +83,19 @@ class EventosHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._reply(200, b'{"ok":true,"mock":"riego-control-v3"}')
+        elif self.path == "/eventos":
+            # Extension del mock para inspeccion; NO es parte del contrato.
+            with _events_lock:
+                rows = []
+                try:
+                    with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                rows.append(json.loads(line))
+                except FileNotFoundError:
+                    pass
+            self._reply(200, json.dumps(rows).encode("utf-8"))
         else:
             self._reply(404, b'{"error":"not_found"}')
 
@@ -68,11 +113,21 @@ class EventosHandler(BaseHTTPRequestHandler):
             log("REST", f"POST /eventos rechazado: {e}")
             self._reply(400, b'{"error":"invalid_json"}')
             return
-        with open(EVENTS_FILE, "a", encoding="utf-8") as f:
-            for ev in events:
-                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-        log("REST", f"POST /eventos: {len(events)} eventos aceptados")
-        self._reply(201, b'{"inserted":' + str(len(events)).encode() + b"}")
+
+        inserted = 0
+        with _events_lock:
+            with open(EVENTS_FILE, "a", encoding="utf-8") as f:
+                for ev in events:
+                    cid = ev.get("client_id")
+                    if isinstance(cid, int) and cid in _seen_client_ids:
+                        continue  # dedup idempotente (Prefer ignore-duplicates)
+                    f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+                    if isinstance(cid, int):
+                        _seen_client_ids.add(cid)
+                    inserted += 1
+        log("REST", f"POST /eventos: {len(events)} recibidos, "
+                    f"{inserted} insertados (dedup)")
+        self._reply(201, b'{"inserted":' + str(inserted).encode() + b"}")
 
 
 async def ws_demo_commands(ws):
@@ -90,9 +145,34 @@ async def ws_demo_commands(ws):
     log("WS", "comando de demostracion enviado: S0 OFF (command_id=2)")
 
 
-async def ws_handler(ws):
+async def ws_keepalive_pings(ws, interval_s):
+    while True:
+        await asyncio.sleep(interval_s)
+        await ws.send(json.dumps({"type": "ping"}))
+        log("WS", "ping JSON enviado (keep-alive)")
+
+
+async def ws_config_push(ws, push_path):
+    try:
+        with open(push_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log("WS", f"config push no leido: {e}")
+        return
+    payload = {"type": "config"}
+    payload.update(cfg)
+    await asyncio.sleep(WS_CONFIG_PUSH_DELAY_S)
+    await ws.send(json.dumps(payload))
+    log("WS", f"config push enviado (version {cfg.get('version')})")
+
+
+async def ws_handler(ws, args):
     log("WS", f"conexion desde {ws.remote_address}")
-    demo = asyncio.create_task(ws_demo_commands(ws))
+    tasks = [asyncio.create_task(ws_keepalive_pings(ws, args.ping_s))]
+    if not args.no_demo:
+        tasks.append(asyncio.create_task(ws_demo_commands(ws)))
+    if args.config_push_file:
+        tasks.append(asyncio.create_task(ws_config_push(ws, args.config_push_file)))
     try:
         async for message in ws:
             try:
@@ -113,15 +193,24 @@ async def ws_handler(ws):
             elif t == "command_update":
                 log("WS", f"command_update: id={data.get('command_id')} "
                           f"status={data.get('status')}")
+            elif t == "config_ack":
+                log("WS", f"config_ack: version={data.get('version')} "
+                          f"status={data.get('status')} "
+                          f"reason={data.get('reason', '')}")
             else:
                 log("WS", f"mensaje tipo {t}: {message[:120]}")
     finally:
-        demo.cancel()
+        for task in tasks:
+            task.cancel()
         log("WS", "conexion cerrada")
 
 
-async def ws_server(port):
-    async with websockets.serve(ws_handler, "0.0.0.0", port, ping_interval=20):
+async def ws_server(port, args):
+    # El keep-alive del contrato es el ping JSON (no pings de protocolo):
+    # la libreria del firmware no responde pings de protocolo del servidor.
+    async with websockets.serve(
+        lambda ws: ws_handler(ws, args), "0.0.0.0", port, ping_interval=None
+    ):
         log("WS", f"escuchando en ws://0.0.0.0:{port}")
         await asyncio.Future()
 
@@ -130,8 +219,15 @@ def main():
     ap = argparse.ArgumentParser(description="Mock del cloud (contrato V3)")
     ap.add_argument("-p", "--port", type=int, default=8080, help="puerto REST")
     ap.add_argument("-w", "--ws-port", type=int, default=8765, help="puerto WS")
+    ap.add_argument("--no-demo", action="store_true",
+                    help="no enviar los comandos de demostracion")
+    ap.add_argument("--ping-s", type=int, default=WS_PING_DEFAULT_S,
+                    help="intervalo del ping JSON (keep-alive)")
+    ap.add_argument("--config-push-file", default=None, metavar="ARCHIVO",
+                    help="enviar este JSON como config push tras el hello_ok")
     args = ap.parse_args()
 
+    _load_seen_ids()
     httpd = ThreadingHTTPServer(("0.0.0.0", args.port), EventosHandler)
     log("REST", f"escuchando en http://0.0.0.0:{args.port} "
                 f"(eventos en {EVENTS_FILE})")
@@ -146,7 +242,7 @@ def main():
     t.start()
 
     try:
-        asyncio.run(ws_server(args.ws_port))
+        asyncio.run(ws_server(args.ws_port, args))
     except KeyboardInterrupt:
         pass
     finally:

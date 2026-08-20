@@ -254,6 +254,17 @@ static void wsSendUpdate(uint32_t commandId, const char* status) {
     s_ws.sendTXT(s);
 }
 
+static void wsSendConfigAck(uint32_t version, const char* status, const char* reason) {
+    JsonDocument doc;
+    doc["type"] = "config_ack";
+    doc["version"] = version;
+    doc["status"] = status;
+    if (reason) doc["reason"] = reason;
+    String s;
+    serializeJson(doc, s);
+    s_ws.sendTXT(s);
+}
+
 static void wsEvent(WStype_t type, uint8_t* payload, size_t length) {
     switch (type) {
     case WStype_CONNECTED: {
@@ -288,6 +299,7 @@ static void wsEvent(WStype_t type, uint8_t* payload, size_t length) {
         }
         const char* typeStr = doc["type"] | "";
         if (strcmp(typeStr, "ping") == 0) {
+            Serial.println("[NET] WS ping recibido, pong enviado");
             JsonDocument pong;
             pong["type"] = "pong";
             String s;
@@ -408,8 +420,11 @@ static void handleCommand(JsonDocument& doc) {
 static void handleConfig(JsonDocument& doc) {
     DeviceConfig cfg = s_cfg;
     cfg.version = doc["version"] | (s_cfg.version + 1u);
-    strncpy(cfg.ssid, doc["ssid"] | "", sizeof(cfg.ssid) - 1);
-    strncpy(cfg.wifiPass, doc["wifi_pass"] | "", sizeof(cfg.wifiPass) - 1);
+    // Campos omitidos: conservan el valor actual (los demas campos ya usan
+    // `| cfg.<campo>` abajo). Esto permite un push parcial sin romper WiFi.
+    strncpy(cfg.ssid, doc["ssid"] | s_cfg.ssid, sizeof(cfg.ssid) - 1);
+    strncpy(cfg.wifiPass, doc["wifi_pass"] | s_cfg.wifiPass,
+            sizeof(cfg.wifiPass) - 1);
     strncpy(cfg.deviceAlias, doc["device_alias"] | "",
             sizeof(cfg.deviceAlias) - 1);
     strncpy(cfg.apiUrl, doc["api_url"] | DEFAULT_API_URL,
@@ -424,10 +439,12 @@ static void handleConfig(JsonDocument& doc) {
     char err[64];
     if (!storeConfigValidate(cfg, err, sizeof(err))) {
         Serial.printf("[NET] Config push rechazada: %s\n", err);
+        wsSendConfigAck(cfg.version, "rejected", err);
         return;
     }
     if (!storeConfigApply(cfg)) {
         Serial.println("[NET] Config push no aplicada (version no superior)");
+        wsSendConfigAck(cfg.version, "rejected", "version no superior");
         return;
     }
     const bool wifiChanged = strcmp(cfg.ssid, s_cfg.ssid) != 0;
@@ -439,6 +456,7 @@ static void handleConfig(JsonDocument& doc) {
         s_wifiRetryAtMs = 0;
     }
     if (wsChanged) wsStart();
+    wsSendConfigAck(cfg.version, "applied", NULL);
     Serial.printf("[NET] Config push aplicada v%lu\n", (unsigned long)cfg.version);
 }
 
