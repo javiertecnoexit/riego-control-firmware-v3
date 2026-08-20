@@ -152,17 +152,28 @@ class EventosHandler(BaseHTTPRequestHandler):
 
 async def ws_demo_commands(ws):
     await asyncio.sleep(WS_DEMO_COMMAND_DELAY_S)
+    # Multi-zona simultanea (Fase 5 HIL E7): S0 y A0 a la vez.
     await ws.send(json.dumps({
         "type": "command", "command_id": 1, "zone": "S0",
         "action": "on", "duration_s": 10,
     }))
     log("WS", "comando de demostracion enviado: S0 ON 10s (command_id=1)")
+    await ws.send(json.dumps({
+        "type": "command", "command_id": 3, "zone": "A0",
+        "action": "on", "duration_s": 10,
+    }))
+    log("WS", "comando de demostracion enviado: A0 ON 10s (command_id=3)")
     await asyncio.sleep(15)
     await ws.send(json.dumps({
         "type": "command", "command_id": 2, "zone": "S0",
         "action": "off",
     }))
     log("WS", "comando de demostracion enviado: S0 OFF (command_id=2)")
+    await ws.send(json.dumps({
+        "type": "command", "command_id": 4, "zone": "A0",
+        "action": "off",
+    }))
+    log("WS", "comando de demostracion enviado: A0 OFF (command_id=4)")
 
 
 async def ws_keepalive_pings(ws, interval_s):

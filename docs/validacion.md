@@ -10,12 +10,12 @@ automatica sin intervencion.
 | ID | Escenario | Como se simula | Criterio | Estado |
 |---|---|---|---|---|
 | E1 | WiFi interrumpido | Apagar el router ~45 s | Log de desconexion (motivo), reintentos cada 15 s, sin reset; al volver: reconexion + flush del outbox | Pendiente |
-| E2 | Backend caido (WS + REST) | Matar el mock ~4 min | WS reconecta cada 5 s, POST conn refused -> backoff 30 s->60 s, outbox retiene; mock vuelve: lote reenviado, dedup 201, watermark avanza | Pendiente |
-| E3 | Servidor lento / respuesta perdida | Mock con `--rest-delay-ms 20000` (> timeout 10 s del cliente) | POST con timeout -> backoff; mock sin retardo: recuperacion y flush | Pendiente |
-| E4 | Reinicio durante subida | Con outbox pendiente, pulsar RST | Boot deterministico (relay OFF, snapshot), outbox persistido, subida tras WiFi con dedup | Pendiente |
+| E2 | Backend caido (WS + REST) | Matar el mock ~4 min | WS reconecta cada 5 s, POST conn refused -> backoff 30 s->60 s, outbox retiene; mock vuelve: lote reenviado, dedup 201, watermark avanza | PASS 20/08 |
+| E3 | Servidor lento / respuesta perdida | Mock con `--rest-delay-ms 20000` (> timeout 10 s del cliente) | POST con timeout -> backoff; mock sin retardo: recuperacion y flush | PASS 20/08 |
+| E4 | Reinicio durante subida | Con outbox pendiente, pulsar RST | Boot deterministico (relay OFF, snapshot), outbox persistido, subida tras WiFi con dedup | PASS 20/08 |
 | E5 | RTC incorrecto | Sin NTP el timestamp es best-effort | La subida no se rompe con timestamp local; formato ISO 8601 respetado (C1 lo cubre) | Pendiente (verificacion parcial) |
 | E6 | Config push invalida | Push `{"version":901,"substrate_zones":9}` | `config_ack` `rejected` con reason, config anterior intacta | Pendiente |
-| E7 | Varias zonas simultaneas | Comandos S0 ON 10 s y A0 ON 10 s casi simultaneos | Ambos `accepted` (max_active_zones=2), apagado correcto, eventos de riego | Pendiente |
+| E7 | Varias zonas simultaneas | Comandos S0 ON 10 s y A0 ON 10 s casi simultaneos | Ambos `accepted` (max_active_zones=2), apagado correcto, eventos de riego | PASS 20/08 |
 | E8 | Apikey invalida (4xx) | Mock con `--require-apikey`, placa sin apikey (o incorrecta) | 401 -> lote descartado sin reintento (diseno documentado); apikey correcta -> 201 | Pendiente |
 | E9 | Outbox llena | Mock caido + `read_interval_s=2` hasta 512 lineas / 32 KB | Descarte de eventos antiguos con log, sin reset; mock vuelve: flush | Pendiente |
 | E10 | WS caido | Cubierto por E2 (reconexion 5 s + keep-alive 120 s) | - | Cubierto por E2 |
