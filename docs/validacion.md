@@ -9,7 +9,7 @@ automatica sin intervencion.
 
 | ID | Escenario | Como se simula | Criterio | Estado |
 |---|---|---|---|---|
-| E1 | WiFi interrumpido | Apagar el router ~45 s | Log de desconexion (motivo), reintentos cada 15 s, sin reset; al volver: reconexion + flush del outbox | Pendiente |
+| E1 | WiFi interrumpido | Apagar el router ~45 s | Log de desconexion (motivo), reintentos cada 15 s, sin reset; al volver: reconexion + flush del outbox | Cubierto (parcial) 20/08: al cortar la energia del router la placa perdio alimentacion (USB del router) -> POWERON_RESET; boot deterministico tras el corte, control local OK, WS reintentos + backoff REST mientras el backend inalcanzable, sin panics. El path explicito de "WiFi desconectado" se repetira al final con fuente de alimentacion separada |
 | E2 | Backend caido (WS + REST) | Matar el mock ~4 min | WS reconecta cada 5 s, POST conn refused -> backoff 30 s->60 s, outbox retiene; mock vuelve: lote reenviado, dedup 201, watermark avanza | PASS 20/08 |
 | E3 | Servidor lento / respuesta perdida | Mock con `--rest-delay-ms 20000` (> timeout 10 s del cliente) | POST con timeout -> backoff; mock sin retardo: recuperacion y flush | PASS 20/08 |
 | E4 | Reinicio durante subida | Con outbox pendiente, pulsar RST | Boot deterministico (relay OFF, snapshot), outbox persistido, subida tras WiFi con dedup | PASS 20/08 |
