@@ -93,6 +93,11 @@ static bool wifiEnsure() {
     const uint32_t now = millis();
     if (s_wifiRetryAtMs > now) return false;
     s_wifiRetryAtMs = now + NET_WIFI_RETRY_MS;
+    // Cada reintento parte de un estado limpio: sin disconnect() previo, el
+    // stack WPA del ESP32 queda atascado en AUTH_FAIL/NO_AP_FOUND tras la
+    // perdida del AP (observado en HIL E1). disconnect(true) descarta la
+    // config/PMK cacheada y el siguiente begin() escanea de cero.
+    if (WiFi.getMode() & WIFI_STA) WiFi.disconnect(true);
     WiFi.mode(WIFI_STA);
     WiFi.begin(s_cfg.ssid, s_cfg.wifiPass);
     Serial.printf("[NET] WiFi conectando a %s (estado %d)\n", s_cfg.ssid, (int)WiFi.status());
@@ -536,6 +541,9 @@ static void netTask(void*) {
 // ----------------------------------------------------------------------------
 void netInit() {
     s_cfg = storeConfigLoad();
+    // No persistir credenciales/NVS en cada connect/disconnect (disconnect(true)
+    // en wifiEnsure escribiria flash en cada reintento).
+    WiFi.persistent(false);
     if (s_cfg.ssid[0] == '\0') {
         hwDisplaySetConnStatus(ConnStatus::FAIL);   // sin red configurada
     }

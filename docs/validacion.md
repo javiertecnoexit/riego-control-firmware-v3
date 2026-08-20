@@ -9,7 +9,7 @@ automatica sin intervencion.
 
 | ID | Escenario | Como se simula | Criterio | Estado |
 |---|---|---|---|---|
-| E1 | WiFi interrumpido | Apagar el router ~45 s | Log de desconexion (motivo), reintentos cada 15 s, sin reset; al volver: reconexion + flush del outbox | Cubierto (parcial) 20/08: al cortar la energia del router la placa perdio alimentacion (USB del router) -> POWERON_RESET; boot deterministico tras el corte, control local OK, WS reintentos + backoff REST mientras el backend inalcanzable, sin panics. El path explicito de "WiFi desconectado" se repetira al final con fuente de alimentacion separada |
+| E1 | WiFi interrumpido | Apagar el router ~45 s | Log de desconexion (motivo), reintentos cada 15 s, sin reset; al volver: reconexion + flush del outbox | PASS 20/08: (a) corte de energia -> POWERON_RESET, boot deterministico, sin panics; (b) apagado/encendido del hotspot WiFi (~45 s) con fuente separada: `motivo 1` detectado, reintentos `estado 6` cada 15 s con backoff, `WiFi conectado` al volver, **0 resets** (WDT 30 s aguanta), y al reconfigurar a la red del router el outbox acumulado (167 eventos) dreno con POST 201 hasta `ack 1610, outbox 0` + WS reconectado. Fix previo necesario: `WiFi.disconnect(true)` antes de cada `begin()` (ver tabla de fallos) |
 | E2 | Backend caido (WS + REST) | Matar el mock ~4 min | WS reconecta cada 5 s, POST conn refused -> backoff 30 s->60 s, outbox retiene; mock vuelve: lote reenviado, dedup 201, watermark avanza | PASS 20/08 |
 | E3 | Servidor lento / respuesta perdida | Mock con `--rest-delay-ms 20000` (> timeout 10 s del cliente) | POST con timeout -> backoff; mock sin retardo: recuperacion y flush | PASS 20/08 |
 | E4 | Reinicio durante subida | Con outbox pendiente, pulsar RST | Boot deterministico (relay OFF, snapshot), outbox persistido, subida tras WiFi con dedup | PASS 20/08 |
@@ -37,6 +37,7 @@ Notas:
 | 20/08 | POST -11 siempre, outbox no drenaba, mock recibia el body | `HTTPClient::setTimeout()` en arduino-esp32 3.x toma ms; se pasaba `/1000` -> timeout de lectura de 10 ms | `setTimeout(CLOUD_HTTP_TIMEOUT_MS)` |
 | 20/08 | WiFiClient fugado por POST (heap caia ~2 KB/flush) -> tras horas la tarea de red degradaba | HTTPClient guarda la referencia; el llamador debe liberar el cliente | `delete client;` tras `http.end()` (+ en el early return de begin) |
 | 20/08 | "Stack smashing protect failure" al drenar lotes grandes | `body[4 KB]` + `full[256]` en la pila de la tarea de red (12 KB) | Buffers a heap; `NET_TASK_STACK_SIZE` 16384 |
+| 20/08 | Tras perder el AP (hotspot), la placa quedaba atascada en bucle AUTH_FAIL/NO_AP_FOUND (202/201) durante minutos y solo se recuperaba con reboot | `WiFi.begin()` repetido sin `WiFi.disconnect()` previo: el stack WPA del ESP32 queda en estado corrupto tras churn de desconexion | `WiFi.disconnect(true)` antes de cada `begin()` en `wifiEnsure()` (descarta config/PMK cacheada) + `WiFi.persistent(false)` en `netInit()` para no desgastar NVS; reconexion determinista tras el corte (E1) |
 
 ### Refuerzo anti-cuelgues (post-release, 20/08)
 
