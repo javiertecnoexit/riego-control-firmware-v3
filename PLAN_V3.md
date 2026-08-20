@@ -392,13 +392,14 @@ implementacion real.
 - Escenarios de fallo de la seccion 9.
 - Criterio: checklist HIL completo sin regresiones.
 
-Estado: completa. E2-E9 y E11 PASS contra mock local (docs/validacion.md).
-E1 cubierto por el escenario de corte de energia (la placa se alimenta del USB
-del router); el path explicito de "WiFi desconectado" queda como re-test
-pendiente con fuente de alimentacion separada (no bloqueante).
-Tres bugs reales encontrados y corregidos en HIL: setTimeout de HTTPClient en
-ms (README/plan no lo reflejaban), fuga de WiFiClient por POST, y stack smashing
-en httpFlush con lotes grandes.
+Estado: completa. E1-E11 PASS contra mock local (docs/validacion.md); E1 cubre
+tanto el corte de energia como la desconexion WiFi explicita (hotspot ~45 s
+off/on con alimentacion separada: motivo 1 detectado, reintentos con backoff,
+0 resets, reconexion + flush del outbox 167->0).
+Cuatro bugs reales encontrados y corregidos en HIL: setTimeout de HTTPClient en
+ms (README/plan no lo reflejaban), fuga de WiFiClient por POST, stack smashing
+en httpFlush con lotes grandes, y el bucle AUTH_FAIL/NO_AP_FOUND por `begin()`
+sin `disconnect()` previo (fix en v3.0.2).
 
 ### Fase 6 — Release
 - Tag `v3.0.0` en el repositorio nuevo.
@@ -410,9 +411,14 @@ Estado: completa. Tag `v3.0.0` publicado en `main` (1d8d2c4) con el binario
 release flasheado y verificado en placa (build limpio, 32/32 tests nativos,
 config preservada, WS/POST operativos contra el mock). Refuerzo post-release
 anti-cuelgues (`netTask` en Task WDT, timeout 30 s) verificado en placa y
-etiquetado como `v3.0.1` (9fb2dbf). La entrega formal de la suite de
-conformidad al equipo cloud queda como accion externa del usuario
-(`tools/conformidad/` + README).
+etiquetado como `v3.0.1` (9fb2dbf). Re-test E1 (desconexion WiFi explicita,
+hotspot ~45 s off/on con alimentacion separada) COMPLETADO: `motivo 1` detectado,
+reintentos con backoff, **0 resets**, reconexion y flush del outbox (167->0).
+Hallado y corregido un fallo de robustez WiFi (`begin()` sin `disconnect()`
+dejaba el stack WPA en bucle AUTH_FAIL/NO_AP_FOUND): fix en `wifiEnsure()` y
+etiquetado como `v3.0.2` (bacdb75), flasheado y verificado en placa. La entrega
+formal de la suite de conformidad al equipo cloud queda como accion externa del
+usuario (`tools/conformidad/` + README).
 
 ## 11. Decisiones
 
