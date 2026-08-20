@@ -8,5 +8,5 @@
 | `contrato_nube_v3.md` | Contrato normativo para el equipo de integracion cloud | Vigente (Fase 4) |
 | `checklist_entrega_cloud.md` | Checklist que el equipo cloud debe cumplir antes de integrar | Vigente (Fase 4) |
 | `esquema_db_sugerido.md` | Esquema de tablas sugerido (no vinculante) | Vigente (Fase 4) |
-| `operacion.md` | Operacion y mantenimiento del firmware | Pendiente (Fases 2-5) |
-| `validacion.md` | Procedimientos de validacion (nativa, contrato, HIL) | Pendiente (Fases 3-5) |
+| `operacion.md` | Operacion y mantenimiento del firmware | Vigente (Fases 2-6) |
+| `validacion.md` | Procedimientos de validacion (nativa, contrato, HIL) y resultados | Vigente (Fases 1-6) |
