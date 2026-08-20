@@ -237,6 +237,7 @@ static void wsStart() {
         s_ws.begin(u.host, u.port, path);
     }
     s_ws.setReconnectInterval(NET_WS_RECONNECT_MS);
+    s_ws.onEvent(wsEvent);
     Serial.printf("[NET] WebSocket %s://%s:%u%s\n", u.secure ? "wss" : "ws",
                   u.host, u.port, path);
 }
@@ -481,13 +482,28 @@ void netInit() {
     if (s_cfg.ssid[0] == '\0') {
         hwDisplaySetConnStatus(ConnStatus::FAIL);   // sin red configurada
     }
+    WiFi.onEvent([](arduino_event_id_t ev, arduino_event_info_t info) {
+        if (ev == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+            Serial.printf("[NET] WiFi conectado a %s\n", s_cfg.ssid);
+        } else if (ev == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+            Serial.printf("[NET] WiFi desconectado, motivo %d\n",
+                          info.wifi_sta_disconnected.reason);
+        }
+    }, ARDUINO_EVENT_WIFI_STA_CONNECTED);
+    WiFi.onEvent([](arduino_event_id_t ev, arduino_event_info_t info) {
+        if (ev == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+            Serial.printf("[NET] WiFi desconectado, motivo %d\n",
+                          info.wifi_sta_disconnected.reason);
+        }
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     s_flushQueue = xQueueCreate(4, sizeof(uint32_t));
     s_cmdQueue = xQueueCreate(NET_COMMAND_QUEUE_LEN, sizeof(NetCommand));
     if (s_cfg.wsUrl[0] != '\0') wsStart();
     xTaskCreatePinnedToCore(netTask, "net", NET_TASK_STACK_SIZE, NULL,
                             NET_TASK_PRIORITY, NULL, 0);
-    Serial.printf("[NET] Tarea de red iniciada (SSID %s, WS %s)\n",
+    Serial.printf("[NET] Tarea de red iniciada (SSID %s, pass %u chars, WS %s)\n",
                   s_cfg.ssid[0] ? s_cfg.ssid : "(sin configurar)",
+                  (unsigned)strlen(s_cfg.wifiPass),
                   s_cfg.wsUrl[0] ? "si" : "no");
 }
 
