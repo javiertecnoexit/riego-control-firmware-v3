@@ -380,6 +380,13 @@ verde + checklist de la fase completado.
 - Validacion cruzada de la documentacion contra el codigo.
 - Criterio: documentacion revisada y sin discrepancias con el firmware.
 
+Estado: completa. `docs/contrato_nube_v3.md` (normativo), `docs/esquema_db_sugerido.md`,
+`docs/checklist_entrega_cloud.md` y `tools/conformidad/` (suite + README) entregados.
+Suite en verde contra el mock de referencia (8 PASS, 0 FAIL; C3 SKIP sin `--apikey`).
+Config push parcial verificado en placa (campos omitidos conservan valor).
+Pendiente de la Fase 6: entrega formal al equipo cloud con reporte PASS contra la
+implementacion real.
+
 ### Fase 5 — HIL Y Validacion En Placa
 - Firmware en placa real contra mock local (WiFi).
 - Escenarios de fallo de la seccion 9.
