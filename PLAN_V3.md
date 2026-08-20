@@ -392,6 +392,13 @@ implementacion real.
 - Escenarios de fallo de la seccion 9.
 - Criterio: checklist HIL completo sin regresiones.
 
+Estado: casi completa. E2-E9 y E11 PASS contra mock local (docs/validacion.md).
+E1 cubierto parcialmente (corte de energia al apagar el router; el path de
+"WiFi desconectado" se repetira al final con fuente de alimentacion separada).
+Tres bugs reales encontrados y corregidos en HIL: setTimeout de HTTPClient en
+ms (README/plan no lo reflejaban), fuga de WiFiClient por POST, y stack smashing
+en httpFlush con lotes grandes.
+
 ### Fase 6 — Release
 - Tag `v3.0.0` en el repositorio nuevo.
 - Publicacion del repositorio (privado) con firmware + documentacion cloud.

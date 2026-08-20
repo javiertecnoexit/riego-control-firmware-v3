@@ -19,7 +19,7 @@ automatica sin intervencion.
 | E8 | Apikey invalida (4xx) | Mock con `--require-apikey`, placa sin apikey (o incorrecta) | 401 -> lote descartado sin reintento (diseno documentado); apikey correcta -> 201 | PASS 20/08 (401 descartado; push v903 con apikey -> 201 e insercion) |
 | E9 | Outbox llena | Mock caido + `read_interval_s=5` hasta 512 lineas / 32 KB | Descarte de eventos antiguos con log, sin reset; mock vuelve: flush | PASS 20/08 (outbox al tope con 5 s de ciclo, drenado sin panics; tope 512/32 KB; trim conserva ultimas) |
 | E10 | WS caido | Cubierto por E2 (reconexion 5 s + keep-alive 120 s) | - | Cubierto por E2 |
-| E11 | Restablecimiento de fabrica | Boton en el portal (usuario) | Config a defaults (v1), outbox borrado, boot normal | Pendiente |
+| E11 | Restablecimiento de fabrica | Boton en el portal (usuario) | Config a defaults (v1), outbox borrado, boot normal | PASS 20/08 (reset -> "Sin config valida: defaults de fabrica", SSID vacio/WS no, outbox vacio; reconfigurado en 2 etapas: URLs y luego red; placa operativa de nuevo) |
 
 Notas:
 - E5: el firmware no tiene NTP; `recorded_at` usa el reloj local. El contrato
