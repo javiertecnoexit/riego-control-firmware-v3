@@ -9,6 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <esp_task_wdt.h>
 #include <string.h>
 #include <time.h>
 
@@ -488,9 +489,13 @@ static void handleConfig(JsonDocument& doc) {
 // Tarea de red
 // ----------------------------------------------------------------------------
 static void netTask(void*) {
+    // Suscribe la tarea de red al watchdog de tarea: un cuelgue en la red
+    // tampoco deja la placa colgada; alimenta cada iteracion.
+    esp_task_wdt_add(xTaskGetCurrentTaskHandle());
     uint32_t lastLoopMs = 0;
     uint32_t lastHeapLogMs = 0;
     for (;;) {
+        esp_task_wdt_reset();
         const uint32_t now = millis();
         if (s_paused) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -515,7 +520,9 @@ static void netTask(void*) {
                 }
                 uint32_t dummy;
                 while (xQueueReceive(s_flushQueue, &dummy, 0) == pdTRUE) {
+                    esp_task_wdt_reset();
                     httpFlush();
+                    esp_task_wdt_reset();
                     if (!wifiEnsure()) break;
                 }
             }

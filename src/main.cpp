@@ -772,8 +772,11 @@ void setup() {
     Serial.println();
     Serial.println("[RIEGO] Firmware V3 iniciado");
 
-    // Watchdog de tarea principal: 10 s sin alimentar = reset.
-    esp_task_wdt_init(10, true);
+    // Watchdog de tarea: 30 s sin alimentar = reset. Ambas tareas (loop y red)
+    // se suscriben y alimentan cada iteracion; 30 s da margen a la operacion de
+    // red mas lenta permitida (connect 10 s + read 10 s) sin resets falsos, y
+    // sigue detectando un cuelgue real en <= 30 s.
+    esp_task_wdt_init(30, true);
     esp_task_wdt_add(NULL);
 
     // Boot deterministico: config guardada (snapshot) antes de encender nada.

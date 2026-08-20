@@ -37,3 +37,13 @@ Notas:
 | 20/08 | POST -11 siempre, outbox no drenaba, mock recibia el body | `HTTPClient::setTimeout()` en arduino-esp32 3.x toma ms; se pasaba `/1000` -> timeout de lectura de 10 ms | `setTimeout(CLOUD_HTTP_TIMEOUT_MS)` |
 | 20/08 | WiFiClient fugado por POST (heap caia ~2 KB/flush) -> tras horas la tarea de red degradaba | HTTPClient guarda la referencia; el llamador debe liberar el cliente | `delete client;` tras `http.end()` (+ en el early return de begin) |
 | 20/08 | "Stack smashing protect failure" al drenar lotes grandes | `body[4 KB]` + `full[256]` en la pila de la tarea de red (12 KB) | Buffers a heap; `NET_TASK_STACK_SIZE` 16384 |
+
+### Refuerzo anti-cuelgues (post-release, 20/08)
+
+- `netTask` suscrita al Task WDT (antes solo el loop): un cuelgue de la tarea de
+  red tambien reinicia en <= 30 s.
+- Timeout global del WDT de 10 s -> 30 s: da margen a la operacion de red mas
+  lenta permitida (connect 10 s + read 10 s) sin resets falsos; ambas tareas
+  alimentan en cada iteracion y alrededor de cada `httpFlush`.
+- Verificado en placa: respuesta lenta del mock (20 s) -> `POST -11` (READ
+  TIMEOUT) con 0 resets; recuperacion a 201 con backlog drenado.
