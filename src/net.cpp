@@ -171,17 +171,19 @@ static void httpFlush() {
              u.secure ? "https" : "http", u.host, u.port, (int)baseLen, u.path);
 
     HTTPClient http;
+    WiFiClient* client = NULL;
     bool ok = false;
     if (u.secure) {
-        WiFiClientSecure* client = new WiFiClientSecure();
-        client->setInsecure();   // D5: TLS sin CA, documentado como limite
-        ok = http.begin(*client, full);
+        client = new WiFiClientSecure();
+        ((WiFiClientSecure*)client)->setInsecure();   // D5: TLS sin CA
+        ok = http.begin(*(WiFiClientSecure*)client, full);
     } else {
-        WiFiClient* client = new WiFiClient();
+        client = new WiFiClient();
         ok = http.begin(*client, full);
     }
     if (!ok) {
         Serial.printf("[NET] POST %s: no se pudo iniciar\n", full);
+        delete client;
         return;
     }
     http.setTimeout(CLOUD_HTTP_TIMEOUT_MS / 1000);
@@ -194,6 +196,9 @@ static void httpFlush() {
 
     const int code = http.POST((uint8_t*)body, bodyLen);
     http.end();
+    // HTTPClient guarda una referencia al cliente pasado a begin(): el
+    // llamador es quien lo libera. Sin esto se fugaba un WiFiClient por POST.
+    delete client;
 
     if (code >= 200 && code < 300) {
         storeOutboxAckUpTo(watermark);
@@ -463,11 +468,17 @@ static void handleConfig(JsonDocument& doc) {
 // ----------------------------------------------------------------------------
 static void netTask(void*) {
     uint32_t lastLoopMs = 0;
+    uint32_t lastHeapLogMs = 0;
     for (;;) {
         const uint32_t now = millis();
         if (s_paused) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
             continue;
+        }
+        if ((now - lastHeapLogMs) >= 60000UL) {
+            lastHeapLogMs = now;
+            Serial.printf("[NET] heap libre %u B\n",
+                          (unsigned)ESP.getFreeHeap());
         }
         if ((now - lastLoopMs) >= NET_TASK_LOOP_MS) {
             lastLoopMs = now;
