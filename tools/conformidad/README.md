@@ -47,8 +47,8 @@ Casos (C = REST, W = WebSocket):
 ## Ejemplo con el mock
 
 ```bash
-# Terminal 1: mock dedicado a la suite
-python tools/mock/mock_cloud.py -p 8091 -w 8767 --no-demo --ping-s 20
+# Terminal 1: mock dedicado a la suite (con comando de demostracion para W3)
+python tools/mock/mock_cloud.py -p 8091 -w 8767 --ping-s 20
 
 # Terminal 2: suite
 python tools/conformidad/conformidad.py --api-url http://127.0.0.1:8091 \
