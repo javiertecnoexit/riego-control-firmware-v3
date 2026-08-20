@@ -406,6 +406,12 @@ en httpFlush con lotes grandes.
 - Entrega formal de la suite de conformidad al equipo cloud.
 - Criterio: tag publicado y suite de conformidad entregada.
 
+Estado: completa. Tag `v3.0.0` publicado en `main` (1d8d2c4) con el binario
+release flasheado y verificado en placa (build limpio, 32/32 tests nativos,
+config preservada, WS/POST operativos contra el mock). La entrega formal de la
+suite de conformidad al equipo cloud queda como accion externa del usuario
+(`tools/conformidad/` + README).
+
 ## 11. Decisiones
 
 ### Prioridades Del Usuario (Vigentes)
