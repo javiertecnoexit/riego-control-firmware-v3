@@ -80,11 +80,23 @@ class EventosHandler(BaseHTTPRequestHandler):
         if body:
             self.wfile.write(body)
 
+    def _auth_ok(self):
+        if self.server.require_apikey is None:
+            return True
+        hdr = self.headers.get("apikey", "") or ""
+        auth = self.headers.get("Authorization", "") or ""
+        if auth.startswith("Bearer "):
+            hdr = auth[7:]
+        return hdr == self.server.require_apikey
+
     def do_GET(self):
         if self.path == "/health":
             self._reply(200, b'{"ok":true,"mock":"riego-control-v3"}')
         elif self.path == "/eventos":
             # Extension del mock para inspeccion; NO es parte del contrato.
+            if not self._auth_ok():
+                self._reply(401, b'{"error":"unauthorized"}')
+                return
             with _events_lock:
                 rows = []
                 try:
@@ -103,6 +115,13 @@ class EventosHandler(BaseHTTPRequestHandler):
         if self.path != "/eventos":
             self._reply(404, b'{"error":"not_found"}')
             return
+        if not self._auth_ok():
+            log("REST", "POST /eventos rechazado: apikey invalida/ausente")
+            self._reply(401, b'{"error":"unauthorized"}')
+            return
+        if self.server.rest_delay_ms:
+            # Simular servidor lento (Fase 5 HIL: timeout del cliente).
+            time.sleep(self.server.rest_delay_ms / 1000.0)
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
         try:
@@ -225,10 +244,18 @@ def main():
                     help="intervalo del ping JSON (keep-alive)")
     ap.add_argument("--config-push-file", default=None, metavar="ARCHIVO",
                     help="enviar este JSON como config push tras el hello_ok")
+    ap.add_argument("--require-apikey", default=None, metavar="CLAVE",
+                    help="exigir este valor en el header apikey (o Bearer); "
+                         "si no coincide: 401 (Fase 5 HIL)")
+    ap.add_argument("--rest-delay-ms", type=int, default=0, metavar="N",
+                    help="retardo de respuesta del POST /eventos (simular "
+                         "servidor lento; Fase 5 HIL)")
     args = ap.parse_args()
 
     _load_seen_ids()
     httpd = ThreadingHTTPServer(("0.0.0.0", args.port), EventosHandler)
+    httpd.require_apikey = args.require_apikey
+    httpd.rest_delay_ms = args.rest_delay_ms
     log("REST", f"escuchando en http://0.0.0.0:{args.port} "
                 f"(eventos en {EVENTS_FILE})")
 
