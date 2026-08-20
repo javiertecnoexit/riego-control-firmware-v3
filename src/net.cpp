@@ -155,19 +155,33 @@ static void httpFlush() {
     const uint32_t now = millis();
     if (s_httpBackoffAtMs > now) return;
 
-    char body[NET_OUTBOX_BATCH_BYTES + 2];
+    // El lote y la URL van al heap: en la pila de la tarea de red (12 KB)
+    // el body[4 KB] + HTTPClient causaban "stack smashing protect failure"
+    // al drenar lotes grandes (Fase 5 HIL E9).
+    char* body = (char*)malloc(NET_OUTBOX_BATCH_BYTES + 2);
+    if (!body) return;
     size_t bodyLen = 0;
     uint32_t watermark = 0;
-    if (!outboxBatch(body, sizeof(body), &bodyLen, &watermark)) return;
+    if (!outboxBatch(body, NET_OUTBOX_BATCH_BYTES + 2, &bodyLen, &watermark)) {
+        free(body);
+        return;
+    }
 
     ParsedUrl u;
-    if (!parseUrl(s_cfg.apiUrl, u)) return;
+    if (!parseUrl(s_cfg.apiUrl, u)) {
+        free(body);
+        return;
+    }
 
     // Path final: <base>/eventos (sin doble barra).
     size_t baseLen = strlen(u.path);
     while (baseLen > 1 && u.path[baseLen - 1] == '/') baseLen--;
-    char full[256];
-    snprintf(full, sizeof(full), "%s://%s:%u%.*s/eventos",
+    char* full = (char*)malloc(256);
+    if (!full) {
+        free(body);
+        return;
+    }
+    snprintf(full, 256, "%s://%s:%u%.*s/eventos",
              u.secure ? "https" : "http", u.host, u.port, (int)baseLen, u.path);
 
     HTTPClient http;
@@ -184,6 +198,8 @@ static void httpFlush() {
     if (!ok) {
         Serial.printf("[NET] POST %s: no se pudo iniciar\n", full);
         delete client;
+        free(full);
+        free(body);
         return;
     }
     // setTimeout toma MILISEGUNDOS en arduino-esp32 3.x (en 2.x eran
@@ -202,6 +218,8 @@ static void httpFlush() {
     // HTTPClient guarda una referencia al cliente pasado a begin(): el
     // llamador es quien lo libera. Sin esto se fugaba un WiFiClient por POST.
     delete client;
+    free(full);
+    free(body);
 
     if (code >= 200 && code < 300) {
         storeOutboxAckUpTo(watermark);
