@@ -186,7 +186,10 @@ static void httpFlush() {
         delete client;
         return;
     }
-    http.setTimeout(CLOUD_HTTP_TIMEOUT_MS / 1000);
+    // setTimeout toma MILISEGUNDOS en arduino-esp32 3.x (en 2.x eran
+    // segundos): pasar CLOUD_HTTP_TIMEOUT_MS / 1000 daba un timeout de
+    // lectura de 10 ms -> READ_TIMEOUT (-11) en toda respuesta.
+    http.setTimeout(CLOUD_HTTP_TIMEOUT_MS);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Prefer", "resolution=ignore-duplicates,return=minimal");
     if (s_cfg.apiKey[0] != '\0') {

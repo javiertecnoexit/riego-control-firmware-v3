@@ -51,7 +51,8 @@ _events_lock = threading.Lock()
 
 
 def log(tag, msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {tag}: {msg}", flush=True)
+    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {tag}: {msg}",
+          flush=True)
 
 
 def _load_seen_ids():
