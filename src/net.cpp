@@ -223,6 +223,8 @@ static bool s_wsEnabled = false;
 static bool s_wsConnected = false;
 static uint32_t s_lastCloudMsgMs = 0;
 
+static void wsEvent(WStype_t type, uint8_t* payload, size_t length);
+
 static void wsStart() {
     ParsedUrl u;
     if (s_cfg.wsUrl[0] == '\0' || !parseUrl(s_cfg.wsUrl, u)) {
