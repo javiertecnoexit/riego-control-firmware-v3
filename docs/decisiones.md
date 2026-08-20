@@ -36,6 +36,8 @@ conflicto.
 | D13 | Mantener ambos transportes: PostgREST (uplink) + WebSocket (downlink) | Aprobada (19/08/2026) |
 | D14 | Conservar pruebas nativas Unity (garantizan funcionamiento) | Aprobada (19/08/2026) |
 | D15 | Estructura reducida: `main` + 5 archivos planos (hardware, rules, store, net, portal) | Aprobada (19/08/2026) |
+| D16 | Tabla unica `eventos` en la nube: outbox del firmware se envia como POST JSON `{apiUrl}/eventos` (array de eventos, `Prefer: resolution=ignore-duplicates`); control de duplicados por `client_id` | Aprobada (19/08/2026) |
+| D17 | `apikey` opcional: el firmware solo envia `apikey`/`Authorization: Bearer` si esta configurada; la URL de API puede ser de cualquier tecnologia (HTTPS) | Aprobada (19/08/2026) |
 
 ## Registro De Cambios
 
@@ -45,3 +47,4 @@ conflicto.
 | 19/08/2026 | Aprobacion de D3, D5-D12 con recomendacion por defecto |
 | 19/08/2026 | Fase 0 ejecutada: estructura, `platformio.ini`, particiones, docs base |
 | 19/08/2026 | Revision 3 del plan: P2 corregido (primer pulso abre el menu, bug de V2); P7 (usabilidad identica, simplificar solo lo interno) y P8 (estructura minima); D13-D15; estructura plana de archivos |
+| 19/08/2026 | Fase 3 implementada y verificada en placa contra mock: outbox REST + WebSocket bidireccional (hello, ping/pong, comandos, config push); D16 (tabla `eventos`) y D17 (apikey opcional) |
