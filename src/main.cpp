@@ -143,7 +143,30 @@ static int64_t* getLastScheduleMinute(ZoneType type, uint8_t zone) {
 }
 
 // Definida mas abajo (eventos al outbox, Fase 3); usada por applyTransition.
-static void outboxEvent(const char* eventType, const char* jsonExtra);
+static void outboxEvent(const char* eventType, const char* jsonExtra,
+                        const char* jsonNulls = NULL);
+
+// PostgREST exige que todos los objetos de un lote tengan el MISMO conjunto
+// de claves (PGRST102 "All object keys must match", hallado con Supabase):
+// cada evento emite ademas las claves no aplicables con valor null.
+static const char* kNullsIrrigation =
+    "\"reading_type\":null,\"value\":null,\"condition\":null,"
+    "\"command_id\":null,\"status\":null,\"zone\":null,\"action\":null";
+static const char* kNullsIrrigationStop =
+    "\"duration_s\":null,\"reading_type\":null,\"value\":null,"
+    "\"condition\":null,\"command_id\":null,\"status\":null,"
+    "\"zone\":null,\"action\":null";
+static const char* kNullsReadingSubstrate =
+    "\"trigger\":null,\"duration_s\":null,\"condition\":null,"
+    "\"command_id\":null,\"status\":null,\"zone\":null,\"action\":null";
+static const char* kNullsReadingAir =
+    "\"zone_type\":null,\"zone_index\":null,\"trigger\":null,"
+    "\"duration_s\":null,\"condition\":null,\"command_id\":null,"
+    "\"status\":null,\"zone\":null,\"action\":null";
+static const char* kNullsAlarm =
+    "\"zone_type\":null,\"zone_index\":null,\"reading_type\":null,"
+    "\"value\":null,\"trigger\":null,\"duration_s\":null,"
+    "\"command_id\":null,\"status\":null,\"zone\":null,\"action\":null";
 
 static uint16_t durationFor(ZoneType type, uint8_t zone) {
     if (type == ZoneType::SUBSTRATE) {
@@ -276,7 +299,7 @@ static bool applyTransition(
                  "\"duration_s\":%u",
                  type == ZoneType::SUBSTRATE ? "substrate" : "sprinkler",
                  zone, (int)tr.trigger, tr.durationSeconds);
-        outboxEvent("irrigation_start", evExtra);
+        outboxEvent("irrigation_start", evExtra, kNullsIrrigation);
         return true;
     }
 
@@ -298,7 +321,7 @@ static bool applyTransition(
              "\"zone_type\":\"%s\",\"zone_index\":%u,\"trigger\":%d",
              type == ZoneType::SUBSTRATE ? "substrate" : "sprinkler",
              zone, (int)finishedTrigger);
-    outboxEvent("irrigation_stop", evExtra);
+    outboxEvent("irrigation_stop", evExtra, kNullsIrrigationStop);
     return true;
 }
 
@@ -455,28 +478,41 @@ static void sanitizeJsonStr(const char* in, char* out, size_t cap) {
 
 static void isoNow(char* out, size_t cap) {
     const struct tm t = hwRtcNow();
+    // Igual que en net.cpp: lectura I2C corrupta del RTC daba timestamps
+    // imposibles que PostgreSQL rechaza (lote 400). Marca valida fija.
+    if (t.tm_year < (2020 - 1900) || t.tm_year > (2099 - 1900) ||
+        t.tm_mon < 0 || t.tm_mon > 11 ||
+        t.tm_mday < 1 || t.tm_mday > 31 ||
+        t.tm_hour < 0 || t.tm_hour > 23 ||
+        t.tm_min < 0 || t.tm_min > 59 ||
+        t.tm_sec < 0 || t.tm_sec > 60) {
+        snprintf(out, cap, "2000-01-01T00:00:00Z");
+        return;
+    }
     snprintf(out, cap, "%04d-%02d-%02dT%02d:%02d:%02dZ",
              t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
              t.tm_hour, t.tm_min, t.tm_sec);
 }
 
-static void outboxEvent(const char* eventType, const char* jsonExtra) {
+static void outboxEvent(const char* eventType, const char* jsonExtra,
+                        const char* jsonNulls) {
     char alias[80];
     sanitizeJsonStr(storeConfigLoad().deviceAlias, alias, sizeof(alias));
     char ts[32];
     isoNow(ts, sizeof(ts));
-    char line[512];
-    if (jsonExtra && jsonExtra[0]) {
-        snprintf(line, sizeof(line),
-                 "{\"client_id\":%lu,\"device_alias\":\"%s\",\"event_type\":\"%s\","
-                 "\"recorded_at\":\"%s\",%s}",
-                 (unsigned long)storeNextClientId(), alias, eventType, ts,
-                 jsonExtra);
-    } else {
-        snprintf(line, sizeof(line),
-                 "{\"client_id\":%lu,\"device_alias\":\"%s\",\"event_type\":\"%s\","
-                 "\"recorded_at\":\"%s\"}",
-                 (unsigned long)storeNextClientId(), alias, eventType, ts);
+    char line[640];
+    int n = snprintf(line, sizeof(line),
+                     "{\"client_id\":%lu,\"device_alias\":\"%s\","
+                     "\"event_type\":\"%s\",\"recorded_at\":\"%s\"",
+                     (unsigned long)storeNextClientId(), alias, eventType, ts);
+    if (n > 0 && jsonExtra && jsonExtra[0]) {
+        n += snprintf(line + n, sizeof(line) - n, ",%s", jsonExtra);
+    }
+    if (n > 0 && jsonNulls && jsonNulls[0]) {
+        n += snprintf(line + n, sizeof(line) - n, ",%s", jsonNulls);
+    }
+    if (n > 0 && n < (int)sizeof(line)) {
+        snprintf(line + n, sizeof(line) - n, "}");
     }
     storeOutboxAppend(line);
 }
@@ -489,25 +525,25 @@ static void telemetryEnqueue(const SensorReadings& readings) {
                      "\"zone_type\":\"substrate\",\"zone_index\":%u,"
                      "\"reading_type\":\"soil_humidity\",\"value\":%.1f",
                      z, readings.soil[z].humidityPct);
-            outboxEvent("reading", extra);
+            outboxEvent("reading", extra, kNullsReadingSubstrate);
         }
         if (readings.soilTemp[z].valid) {
             snprintf(extra, sizeof(extra),
                      "\"zone_type\":\"substrate\",\"zone_index\":%u,"
                      "\"reading_type\":\"soil_temp\",\"value\":%.1f",
                      z, readings.soilTemp[z].tempC);
-            outboxEvent("reading", extra);
+            outboxEvent("reading", extra, kNullsReadingSubstrate);
         }
     }
     if (readings.air.valid) {
         snprintf(extra, sizeof(extra),
                  "\"reading_type\":\"air_temp\",\"value\":%.1f",
                  readings.air.tempC);
-        outboxEvent("reading", extra);
+        outboxEvent("reading", extra, kNullsReadingAir);
         snprintf(extra, sizeof(extra),
                  "\"reading_type\":\"air_humidity\",\"value\":%.1f",
                  readings.air.humidityPct);
-        outboxEvent("reading", extra);
+        outboxEvent("reading", extra, kNullsReadingAir);
     }
 }
 
@@ -698,7 +734,8 @@ static void alarmEvaluate(const struct tm& now, const SensorReadings& readings) 
                       (int)newCondition);
         char evExtra[64];
         snprintf(evExtra, sizeof(evExtra), "\"condition\":%d", (int)newCondition);
-        outboxEvent(shouldBeActive ? "alarm" : "alarm_cleared", evExtra);
+        outboxEvent(shouldBeActive ? "alarm" : "alarm_cleared", evExtra,
+                    kNullsAlarm);
     } else if (s_alarmActive && newCondition != s_activeCondition) {
         s_activeCondition = newCondition;
         s_alarmStartedAt = now;

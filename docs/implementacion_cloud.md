@@ -106,29 +106,28 @@ POST <api_url>/eventos
 | `client_id` | `uint32` (0..4,294,967,295) — almacenar como `BIGINT` |
 | `device_alias` | ≤ 32 caracteres |
 
-### 2.6 Ejemplo real de petición (capturado en HIL)
+### 2.6 Ejemplo real de petición (formato v3.0.3, abreviado)
 
 ```http
 POST /eventos HTTP/1.1
-Host: 192.168.1.10:8081
+Host: uigfxjovkqlbvxywvcta.supabase.co
 Content-Type: application/json
 Prefer: resolution=ignore-duplicates,return=minimal
-Content-Length: 4069
+apikey: sb_publishable_...
+Authorization: Bearer sb_publishable_...
 
 [
-  {"client_id":1906,"device_alias":"","event_type":"reading","recorded_at":"2026-08-20T23:09:00Z","zone_type":"substrate","zone_index":0,"reading_type":"soil_temp","value":20.2},
-  {"client_id":1907,"device_alias":"","event_type":"reading","recorded_at":"2026-08-20T23:09:00Z","reading_type":"air_temp","value":20.9},
-  {"client_id":1908,"device_alias":"","event_type":"reading","recorded_at":"2026-08-20T23:09:00Z","reading_type":"air_humidity","value":56.9},
+  {"client_id":2787,"device_alias":"","event_type":"reading","recorded_at":"2026-08-21T02:04:36Z","zone_type":"substrate","zone_index":0,"reading_type":"soil_temp","value":20.1,"trigger":null,"duration_s":null,"condition":null,"command_id":null,"status":null,"zone":null,"action":null},
+  {"client_id":2788,"device_alias":"","event_type":"reading","recorded_at":"2026-08-21T02:04:36Z","zone_type":null,"zone_index":null,"reading_type":"air_temp","value":20.9,"trigger":null,"duration_s":null,"condition":null,"command_id":null,"status":null,"zone":null,"action":null},
   ...
-  {"client_id":1933,"device_alias":"","event_type":"command","recorded_at":"2026-08-20T23:13:30Z","command_id":7,"status":"accepted","zone":"S0","action":"on","duration_s":10},
-  {"client_id":1934,"device_alias":"","event_type":"reading","recorded_at":"2026-08-20T23:13:30Z","zone_type":"substrate","zone_index":0,"reading_type":"soil_temp","value":20.1},
-  {"client_id":1937,"device_alias":"","event_type":"irrigation_start","recorded_at":"2026-08-20T23:13:30Z","zone_type":"substrate","zone_index":0,"trigger":2,"duration_s":10},
-  {"client_id":1938,"device_alias":"","event_type":"irrigation_stop","recorded_at":"2026-08-20T23:13:40Z","zone_type":"substrate","zone_index":0,"trigger":2}
 ]
 ```
 
+> Verificado contra Supabase real (20/08): lote heterogéneo con claves nulas → **201**.
+
 > **Nota**: `device_alias` vacío (`""`) ocurre cuando no se configuró alias en el portal.  
-> **Nota**: `recorded_at` es **best-effort** (sin NTP, reloj local) — formato ISO 8601 UTC obligatorio, exactitud no garantizada (E5).
+> **Nota**: `recorded_at` es **best-effort** (sin NTP, reloj local) — formato ISO 8601 UTC obligatorio, exactitud no garantizada (E5).  
+> **Nota v3.0.3**: cada evento lleva el **superset completo de claves**; las no aplicables van como `null` (ver §3).
 
 ---
 
@@ -143,6 +142,16 @@ Todos los eventos comparten **campos comunes**:
 | `event_type` | texto | Uno de: `reading`, `irrigation_start`, `irrigation_stop`, `alarm`, `alarm_cleared`, `command` |
 | `recorded_at` | texto | Marca UTC ISO 8601: `YYYY-MM-DDTHH:MM:SSZ` (sin fracción) |
 
+### ⚠️ Claves uniformes en el lote (normativo desde v3.0.3)
+
+PostgREST/Supabase exige que **todos los objetos de un lote tengan el mismo conjunto de claves**; si no, responde `400 PGRST102 "All object keys must match"`. Por eso el firmware emite en **cada evento el superset completo de claves** y las que no aplican van con valor `null`. La nube DEBE:
+
+1. Aceptar `null` en cualquier campo opcional.
+2. NO requerir la ausencia de claves (validar por valor, no por presencia).
+3. Almacenar `null` como NULL en las columnas correspondientes.
+
+Conjunto completo de claves por evento (15): `client_id`, `device_alias`, `event_type`, `recorded_at`, `zone_type`, `zone_index`, `reading_type`, `value`, `trigger`, `duration_s`, `condition`, `command_id`, `status`, `zone`, `action`.
+
 > La nube DEBE aceptar cada evento como JSON con estos campos + los de su tipo, **ignorando campos extra** que agreguen versiones futuras.
 
 ---
@@ -156,16 +165,15 @@ Todos los eventos comparten **campos comunes**:
 | `reading_type` | `"soil_humidity"`, `"soil_temp"`, `"air_temp"`, `"air_humidity"` | Siempre |
 | `value` | número decimal | Siempre |
 
-**Ejemplos reales:**
+**Ejemplos reales (formato v3.0.3 con claves nulas):**
 
 ```json
-{"client_id":1906,"device_alias":"","event_type":"reading","recorded_at":"2026-08-20T23:09:00Z","zone_type":"substrate","zone_index":0,"reading_type":"soil_temp","value":20.2}
-{"client_id":1907,"device_alias":"","event_type":"reading","recorded_at":"2026-08-20T23:09:00Z","reading_type":"air_temp","value":20.9}
-{"client_id":1908,"device_alias":"","event_type":"reading","recorded_at":"2026-08-20T23:09:00Z","reading_type":"air_humidity","value":56.9}
+{"client_id":2787,"device_alias":"","event_type":"reading","recorded_at":"2026-08-21T02:04:36Z","zone_type":"substrate","zone_index":0,"reading_type":"soil_temp","value":20.1,"trigger":null,"duration_s":null,"condition":null,"command_id":null,"status":null,"zone":null,"action":null}
+{"client_id":2788,"device_alias":"","event_type":"reading","recorded_at":"2026-08-21T02:04:36Z","zone_type":null,"zone_index":null,"reading_type":"air_temp","value":20.9,"trigger":null,"duration_s":null,"condition":null,"command_id":null,"status":null,"zone":null,"action":null}
 ```
 
-> **Lecturas de aire** (`air_temp`, `air_humidity`) **no llevan** `zone_type` ni `zone_index`.  
-> **Lecturas de sustrato** llevan `zone_type:"substrate"` y `zone_index` (0..3).
+> **Lecturas de aire** (`air_temp`, `air_humidity`): `zone_type` y `zone_index` en `null`.  
+> **Lecturas de sustrato**: `zone_type:"substrate"` + `zone_index` (0..3).
 
 ---
 
@@ -178,11 +186,11 @@ Todos los eventos comparten **campos comunes**:
 | `trigger` | entero | Origen: **1=MANUAL, 2=OVERRIDE (remoto), 3=SCHEDULE (horario), 4=THRESHOLD (umbral)** |
 | `duration_s` | entero | Solo `irrigation_start`: duración en segundos |
 
-**Ejemplos reales (trigger=2 = OVERRIDE remoto):**
+**Ejemplos reales (trigger=2 = OVERRIDE remoto; formato v3.0.3):**
 
 ```json
-{"client_id":1937,"device_alias":"","event_type":"irrigation_start","recorded_at":"2026-08-20T23:13:30Z","zone_type":"substrate","zone_index":0,"trigger":2,"duration_s":10}
-{"client_id":1938,"device_alias":"","event_type":"irrigation_stop","recorded_at":"2026-08-20T23:13:40Z","zone_type":"substrate","zone_index":0,"trigger":2}
+{"client_id":1937,"device_alias":"","event_type":"irrigation_start","recorded_at":"2026-08-20T23:13:30Z","zone_type":"substrate","zone_index":0,"trigger":2,"duration_s":10,"reading_type":null,"value":null,"condition":null,"command_id":null,"status":null,"zone":null,"action":null}
+{"client_id":1938,"device_alias":"","event_type":"irrigation_stop","recorded_at":"2026-08-20T23:13:40Z","zone_type":"substrate","zone_index":0,"trigger":2,"duration_s":null,"reading_type":null,"value":null,"condition":null,"command_id":null,"status":null,"zone":null,"action":null}
 ```
 
 ---
@@ -194,8 +202,8 @@ Todos los eventos comparten **campos comunes**:
 | `condition` | entero | 1=aire demasiado caliente, 2=aire demasiado frío, 3=sin conexión 60 min, 4=humedad de sustrato persistentemente baja |
 
 ```json
-{"client_id":120,"device_alias":"Prototipo_1","event_type":"alarm","recorded_at":"2026-08-20T14:30:00Z","condition":3}
-{"client_id":125,"device_alias":"Prototipo_1","event_type":"alarm_cleared","recorded_at":"2026-08-20T15:15:00Z","condition":3}
+{"client_id":120,"device_alias":"Prototipo_1","event_type":"alarm","recorded_at":"2026-08-20T14:30:00Z","condition":3,"zone_type":null,"zone_index":null,"reading_type":null,"value":null,"trigger":null,"duration_s":null,"command_id":null,"status":null,"zone":null,"action":null}
+{"client_id":125,"device_alias":"Prototipo_1","event_type":"alarm_cleared","recorded_at":"2026-08-20T15:15:00Z","condition":3,"zone_type":null,"zone_index":null,"reading_type":null,"value":null,"trigger":null,"duration_s":null,"command_id":null,"status":null,"zone":null,"action":null}
 ```
 
 ---
@@ -210,10 +218,10 @@ Todos los eventos comparten **campos comunes**:
 | `action` | `"on"` o `"off"` | Acción |
 | `duration_s` | entero | Duración en segundos (relevante solo si `on`) |
 
-**Ejemplo real (formato corregido v3.0.2 — incluye `device_alias` + `recorded_at`):**
+**Ejemplo real (formato corregido v3.0.3 — incluye `device_alias` + `recorded_at` + claves nulas):**
 
 ```json
-{"client_id":1933,"device_alias":"","event_type":"command","recorded_at":"2026-08-20T23:13:30Z","command_id":7,"status":"accepted","zone":"S0","action":"on","duration_s":10}
+{"client_id":1933,"device_alias":"","event_type":"command","recorded_at":"2026-08-20T23:13:30Z","command_id":7,"status":"accepted","zone":"S0","action":"on","duration_s":10,"zone_type":null,"zone_index":null,"reading_type":null,"value":null,"trigger":null,"condition":null}
 ```
 
 > **Importante**: el firmware **solo emite `status="accepted"`** (simplificación V3; no hay `started`/`completed`). El registro `command` en REST confirma la ejecución aceptada.
@@ -593,6 +601,7 @@ El equipo cloud DEBE completar **todos** los puntos:
 | Versión | Fecha | Cambios |
 |---------|-------|---------|
 | 1.0 | 20/08/2026 | Primera versión completa basada en HIL v3.0.2 (contrato normativo, mock, capturas reales, SQL, UI cases, credenciales) |
+| 1.1 | 20/08/2026 | v3.0.3: claves uniformes con padding `null` (PGRST102), ejemplos verificados contra Supabase real, diagnóstico de errores en firmware |
 
 ---
 

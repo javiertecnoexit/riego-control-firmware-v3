@@ -104,20 +104,29 @@ Campos comunes a TODO evento:
 La nube DEBE aceptar cada evento como JSON con estos campos y los de su tipo
 (abajo), ignorando campos extra que agreguen versiones futuras.
 
+**Claves uniformes (normativo desde v3.0.3):** PostgREST/Supabase exige que
+todos los objetos de un lote tengan el MISMO conjunto de claves (si no:
+400 `PGRST102 "All object keys must match"`). Por eso el firmware emite en
+CADA evento el superset completo de claves del contrato; las que no aplican
+al tipo van con valor `null`. La nube DEBE tolerar `null` en cualquier campo
+opcional y NO debe requerir la ausencia de claves.
+
 ### 3.1 `reading` — telemetria de sensores
 
 | Campo | Tipo | Presente |
 |---|---|---|
-| `zone_type` | `"substrate"` o `"sprinkler"` | solo humedad/temperatura de sustrato |
-| `zone_index` | entero 0-based | solo sustrato |
+| `zone_type` | `"substrate"` o `"sprinkler"`, o `null` | solo humedad/temperatura de sustrato |
+| `zone_index` | entero 0-based, o `null` | solo sustrato |
 | `reading_type` | `"soil_humidity"`, `"soil_temp"`, `"air_temp"`, `"air_humidity"` | siempre |
 | `value` | numero decimal | siempre |
 
-Ejemplo:
+Ejemplo (formato v3.0.3 con padding de claves nulas):
 ```json
 {"client_id":64,"device_alias":"Prototipo_1","event_type":"reading",
  "recorded_at":"2026-08-19T23:45:21Z","zone_type":"substrate",
- "zone_index":0,"reading_type":"soil_humidity","value":44.8}
+ "zone_index":0,"reading_type":"soil_humidity","value":44.8,
+ "trigger":null,"duration_s":null,"condition":null,"command_id":null,
+ "status":null,"zone":null,"action":null}
 ```
 
 ### 3.2 `irrigation_start` / `irrigation_stop`

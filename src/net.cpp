@@ -42,6 +42,48 @@ static uint8_t  s_executedIdx = 0;
 static void handleCommand(JsonDocument& doc);
 static void handleConfig(JsonDocument& doc);
 
+// Escapa un texto para incrustarlo en JSON (mismo criterio que main.cpp).
+static void sanitizeJsonStr(const char* in, char* out, size_t cap) {
+    size_t o = 0;
+    for (const char* p = in; *p && o + 6 < cap; ++p) {
+        const unsigned char c = (unsigned char)*p;
+        switch (c) {
+            case '"':  out[o++] = '\\'; out[o++] = '"';  break;
+            case '\\': out[o++] = '\\'; out[o++] = '\\'; break;
+            case '\n': out[o++] = '\\'; out[o++] = 'n';  break;
+            case '\r': out[o++] = '\\'; out[o++] = 'r';  break;
+            default:
+                if (c < 0x20) {
+                    o += (size_t)snprintf(out + o, cap - o, "\\u%04x", c);
+                } else {
+                    out[o++] = (char)c;
+                }
+        }
+    }
+    out[o] = '\0';
+}
+
+// Marca de tiempo UTC ISO 8601 (YYYY-MM-DDTHH:MM:SSZ, sin fraccion).
+static void isoNow(char* out, size_t cap) {
+    const struct tm t = hwRtcNow();
+    // Una lectura I2C corrupta del RTC produce campos imposibles
+    // (p.ej. "2165-85-165T165:165:85Z") que PostgreSQL rechaza y hace
+    // caer el lote completo con 400. Ante reloj invalido se emite una
+    // marca valida fija: el contrato exige formato ISO 8601 siempre.
+    if (t.tm_year < (2020 - 1900) || t.tm_year > (2099 - 1900) ||
+        t.tm_mon < 0 || t.tm_mon > 11 ||
+        t.tm_mday < 1 || t.tm_mday > 31 ||
+        t.tm_hour < 0 || t.tm_hour > 23 ||
+        t.tm_min < 0 || t.tm_min > 59 ||
+        t.tm_sec < 0 || t.tm_sec > 60) {
+        snprintf(out, cap, "2000-01-01T00:00:00Z");
+        return;
+    }
+    snprintf(out, cap, "%04d-%02d-%02dT%02d:%02d:%02dZ",
+             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+             t.tm_hour, t.tm_min, t.tm_sec);
+}
+
 // ----------------------------------------------------------------------------
 // Parsing de URLs (host, puerto, path, scheme)
 // ----------------------------------------------------------------------------
@@ -135,9 +177,18 @@ static bool outboxBatch(char* body, size_t bodyCap, size_t* bodyLen,
     uint32_t maxId = 0;
     char line[768];
     for (size_t i = 0; i < count && i < NET_OUTBOX_BATCH_MAX; ++i) {
-        if (!storeOutboxReadLine(i, line, sizeof(line))) break;
+        if (!storeOutboxReadLine(i, line, sizeof(line))) {
+            Serial.printf(
+                "[NET] outbox: linea %u ilegible (vacía o > %u bytes); "
+                "se corta el lote aqui\n", (unsigned)i, (unsigned)sizeof(line));
+            break;
+        }
         const size_t ll = strlen(line);
-        if (ll == 0) continue;
+        if (ll == 0) {
+            Serial.printf("[NET] outbox: linea %u vacia; se omite\n",
+                          (unsigned)i);
+            continue;
+        }
         if (used + ll + 2 > bodyCap) break;   // + "," + "]"
         if (used > 1) body[used++] = ',';
         memcpy(body + used, line, ll);
@@ -190,37 +241,51 @@ static void httpFlush() {
     snprintf(full, 256, "%s://%s:%u%.*s/eventos",
              u.secure ? "https" : "http", u.host, u.port, (int)baseLen, u.path);
 
-    HTTPClient http;
+    int code = 0;
     WiFiClient* client = NULL;
-    bool ok = false;
-    if (u.secure) {
-        client = new WiFiClientSecure();
-        ((WiFiClientSecure*)client)->setInsecure();   // D5: TLS sin CA
-        ok = http.begin(*(WiFiClientSecure*)client, full);
-    } else {
-        client = new WiFiClient();
-        ok = http.begin(*client, full);
-    }
-    if (!ok) {
-        Serial.printf("[NET] POST %s: no se pudo iniciar\n", full);
-        delete client;
-        free(full);
-        free(body);
-        return;
-    }
-    // setTimeout toma MILISEGUNDOS en arduino-esp32 3.x (en 2.x eran
-    // segundos): pasar CLOUD_HTTP_TIMEOUT_MS / 1000 daba un timeout de
-    // lectura de 10 ms -> READ_TIMEOUT (-11) en toda respuesta.
-    http.setTimeout(CLOUD_HTTP_TIMEOUT_MS);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("Prefer", "resolution=ignore-duplicates,return=minimal");
-    if (s_cfg.apiKey[0] != '\0') {
-        http.addHeader("apikey", s_cfg.apiKey);
-        http.addHeader("Authorization", String("Bearer ") + s_cfg.apiKey);
-    }
+    {
+        HTTPClient http;
+        bool ok = false;
+        if (u.secure) {
+            client = new WiFiClientSecure();
+            ((WiFiClientSecure*)client)->setInsecure();   // D5: TLS sin CA
+            ok = http.begin(*(WiFiClientSecure*)client, full);
+        } else {
+            client = new WiFiClient();
+            ok = http.begin(*client, full);
+        }
+        if (!ok) {
+            Serial.printf("[NET] POST %s: no se pudo iniciar\n", full);
+            delete client;
+            free(full);
+            free(body);
+            return;
+        }
+        // setTimeout toma MILISEGUNDOS en arduino-esp32 3.x (en 2.x eran
+        // segundos): pasar CLOUD_HTTP_TIMEOUT_MS / 1000 daba un timeout de
+        // lectura de 10 ms -> READ_TIMEOUT (-11) en toda respuesta.
+        http.setTimeout(CLOUD_HTTP_TIMEOUT_MS);
+        http.addHeader("Content-Type", "application/json");
+        http.addHeader("Prefer", "resolution=ignore-duplicates,return=minimal");
+        if (s_cfg.apiKey[0] != '\0') {
+            http.addHeader("apikey", s_cfg.apiKey);
+            http.addHeader("Authorization", String("Bearer ") + s_cfg.apiKey);
+        }
 
-    const int code = http.POST((uint8_t*)body, bodyLen);
-    http.end();
+        code = http.POST((uint8_t*)body, bodyLen);
+        if (code < 200 || code >= 300) {
+            // Diagnostico: el cuerpo del error dice el motivo exacto
+            // (PostgREST: columna faltante, timestamp invalido, etc.).
+            String resp = http.getString();
+            Serial.printf("[NET] POST /eventos %d respuesta: %s\n",
+                          code, resp.c_str());
+        }
+        http.end();
+        // El destructor de HTTPClient (al cerrar este bloque) invoca
+        // _client->stop(): el cliente debe estar VIVO en ese momento.
+        // Liberarlo antes del fin de scope era use-after-free y provocababa
+        // LoadProhibited al salir de httpFlush (hallado con Supabase 400).
+    }
     // HTTPClient guarda una referencia al cliente pasado a begin(): el
     // llamador es quien lo libera. Sin esto se fugaba un WiFiClient por POST.
     delete client;
@@ -426,14 +491,23 @@ static void handleCommand(JsonDocument& doc) {
 
     // Aceptar: se persiste en el outbox ANTES de encolar (un reinicio no
     // repite el comando; el resultado llega al cloud via at-least-once).
+    // El evento lleva device_alias y recorded_at (campos comunes del
+    // contrato): sin ellos un PostgREST con NOT NULL rechaza el lote 4xx.
     const uint32_t clientId = storeNextClientId();
-    char line[320];
+    char alias[80];
+    sanitizeJsonStr(s_cfg.deviceAlias, alias, sizeof(alias));
+    char ts[32];
+    isoNow(ts, sizeof(ts));
+    char line[448];
     snprintf(line, sizeof(line),
-             "{\"client_id\":%lu,\"event_type\":\"command\","
-             "\"command_id\":%lu,\"status\":\"accepted\",\"zone\":\"%s\","
-             "\"action\":\"%s\",\"duration_s\":%u}",
-             (unsigned long)clientId, (unsigned long)id, zone, action,
-             durationS);
+             "{\"client_id\":%lu,\"device_alias\":\"%s\",\"event_type\":"
+             "\"command\",\"recorded_at\":\"%s\",\"command_id\":%lu,"
+             "\"status\":\"accepted\",\"zone\":\"%s\",\"action\":\"%s\","
+             "\"duration_s\":%u,\"zone_type\":null,\"zone_index\":null,"
+             "\"reading_type\":null,\"value\":null,\"trigger\":null,"
+             "\"condition\":null}",
+             (unsigned long)clientId, alias, ts, (unsigned long)id, zone,
+             action, durationS);
     storeOutboxAppend(line);
 
     s_executedIds[s_executedIdx] = id;
@@ -563,6 +637,20 @@ void netInit() {
     }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     s_flushQueue = xQueueCreate(4, sizeof(uint32_t));
     s_cmdQueue = xQueueCreate(NET_COMMAND_QUEUE_LEN, sizeof(NetCommand));
+    // Diagnostico de campo: vuelco del outbox al iniciar (detecta lineas
+    // zombis que sobreviven a los acks o eventos nunca enviados).
+    {
+        const size_t n = storeOutboxCount();
+        Serial.printf("[NET] Outbox al iniciar: %u evento(s)\n", (unsigned)n);
+        char l[512];
+        for (size_t i = 0; i < n && i < 8; ++i) {
+            if (storeOutboxReadLine(i, l, sizeof(l))) {
+                Serial.printf("[NET]   [%u] %s\n", (unsigned)i, l);
+            } else {
+                Serial.printf("[NET]   [%u] <ilegible>\n", (unsigned)i);
+            }
+        }
+    }
     if (s_cfg.wsUrl[0] != '\0') wsStart();
     xTaskCreatePinnedToCore(netTask, "net", NET_TASK_STACK_SIZE, NULL,
                             NET_TASK_PRIORITY, NULL, 0);

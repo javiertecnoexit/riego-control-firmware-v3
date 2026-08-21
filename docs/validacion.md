@@ -38,6 +38,18 @@ Notas:
 | 20/08 | WiFiClient fugado por POST (heap caia ~2 KB/flush) -> tras horas la tarea de red degradaba | HTTPClient guarda la referencia; el llamador debe liberar el cliente | `delete client;` tras `http.end()` (+ en el early return de begin) |
 | 20/08 | "Stack smashing protect failure" al drenar lotes grandes | `body[4 KB]` + `full[256]` en la pila de la tarea de red (12 KB) | Buffers a heap; `NET_TASK_STACK_SIZE` 16384 |
 | 20/08 | Tras perder el AP (hotspot), la placa quedaba atascada en bucle AUTH_FAIL/NO_AP_FOUND (202/201) durante minutos y solo se recuperaba con reboot | `WiFi.begin()` repetido sin `WiFi.disconnect()` previo: el stack WPA del ESP32 queda en estado corrupto tras churn de desconexion | `WiFi.disconnect(true)` antes de cada `begin()` en `wifiEnsure()` (descarta config/PMK cacheada) + `WiFi.persistent(false)` en `netInit()` para no desgastar NVS; reconexion determinista tras el corte (E1) |
+| 20/08 | **Integracion cloud real (Supabase)**: `Guru Meditation LoadProhibited` (reboot) al salir de `httpFlush()` tras un 400 del backend; la placa reiniciaba en cada ciclo de subida | Use-after-free: `delete client` se ejecutaba antes de que el destructor de `HTTPClient` (fin de scope) invocara `_client->stop()` sobre el puntero ya liberado. Con el mock la memoria liberada seguia intacta (crash latente); con TLS/Supabase la heap se reutilizaba -> vtable corrupta | `HTTPClient` movido a scope interno: el objeto muere ANTES del `delete client`. Ademas: log del cuerpo de respuesta en errores (diagnostico PostgREST en campo) |
+| 20/08 | **Integracion cloud real (Supabase)**: POST 400 `PGRST102 "All object keys must match"` en cada lote; el mock aceptaba todo y no lo detecto | PostgREST exige que TODOS los objetos de un lote tengan el mismo conjunto de claves; nuestros eventos eran heterogeneos (lecturas de aire sin `zone_type`, alarmas solo `condition`, etc.) | Cada evento emite ahora el superset completo de claves; las no aplicables van como `null` (`kNulls*` en main.cpp, padding tambien en el evento `command`). Verificado contra Supabase: lote heterogeneo -> 201 |
+| 20/08 | **Integracion cloud real**: timestamps imposibles ocasionales (`2165-85-165T...`) por lectura I2C corrupta del RTC; PostgreSQL rechaza el timestamptz y cae el lote completo | `hwRtcNow()` sin validacion: basura del bus I2C llega directa al JSON | Validacion de rango en ambas copias de `isoNow()` (main.cpp/net.cpp): reloj invalido -> marca fija valida `2000-01-01T00:00:00Z` |
+
+### Integracion cloud real (post-release, 20/08)
+
+- Backend: Supabase (PostgREST) con publishable key; tabla `eventos` segun
+  esquema sugerido, RLS desactivada. Verificado end-to-end desde la placa:
+  POST 201, ack avanza, outbox drena, datos visibles via SELECT.
+- Diagnostico nuevo en firmware: cuerpo de la respuesta HTTP en errores
+  (`[NET] POST /eventos NNN respuesta: ...`) y vuelco del outbox al iniciar
+  (`[NET] Outbox al iniciar: N evento(s)` + primeras lineas).
 
 ### Refuerzo anti-cuelgues (post-release, 20/08)
 
