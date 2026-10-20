@@ -38,6 +38,7 @@ conflicto.
 | D15 | Estructura reducida: `main` + 5 archivos planos (hardware, rules, store, net, portal) | Aprobada (19/08/2026) |
 | D16 | Tabla unica `eventos` en la nube: outbox del firmware se envia como POST JSON `{apiUrl}/eventos` (array de eventos, `Prefer: resolution=ignore-duplicates`); control de duplicados por `client_id` | Aprobada (19/08/2026) |
 | D17 | `apikey` opcional: el firmware solo envia `apikey`/`Authorization: Bearer` si esta configurada; la URL de API puede ser de cualquier tecnologia (HTTPS) | Aprobada (19/08/2026) |
+| D18 | Ingesta compatible con RLS de solo INSERT: `Prefer: return=minimal` + fallback 409 por evento (reemplaza el uso de `resolution=ignore-duplicates` de D16); requiere PK `(device_alias, client_id)` | Aprobada (20/10/2026) |
 
 ## Registro De Cambios
 
@@ -48,3 +49,4 @@ conflicto.
 | 19/08/2026 | Fase 0 ejecutada: estructura, `platformio.ini`, particiones, docs base |
 | 19/08/2026 | Revision 3 del plan: P2 corregido (primer pulso abre el menu, bug de V2); P7 (usabilidad identica, simplificar solo lo interno) y P8 (estructura minima); D13-D15; estructura plana de archivos |
 | 19/08/2026 | Fase 3 implementada y verificada en placa contra mock: outbox REST + WebSocket bidireccional (hello, ping/pong, comandos, config push); D16 (tabla `eventos`) y D17 (apikey opcional) |
+| 20/10/2026 | Integracion Vivero360 (Supabase): `Prefer: return=minimal` + fallback 409 por evento (D18); verificado en placa (lote 201, duplicado 409, drenaje del outbox) |

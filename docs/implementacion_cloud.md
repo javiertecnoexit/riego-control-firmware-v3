@@ -73,18 +73,21 @@ POST <api_url>/eventos
 | Header | Valor | Obligatorio |
 |--------|-------|-------------|
 | `Content-Type` | `application/json` | **Sí** |
-| `Prefer` | `resolution=ignore-duplicates,return=minimal` | **Sí** (ver §2.4) |
+| `Prefer` | `return=minimal` | **Sí** (ver §2.4) |
 | `apikey` | la apikey del proyecto | Solo si configurada en el portal |
 | `Authorization` | `Bearer <apikey>` | Solo si configurada en el portal |
 
 > **Apikey opcional** (D17): si no está configurada, la placa **NO envía** `apikey` ni `Authorization`. La nube DEBE aceptar peticiones sin estos headers o documentar su propio mecanismo configurable.
+
+> **Nota (v3.0.4)**: el firmware **no** envía `resolution=ignore-duplicates`. Ese modo genera un `ON CONFLICT` que, con RLS y política solo de INSERT, exige SELECT y devuelve 401. La idempotencia se resuelve con el 409 (§2.4).
 
 ### 2.3 Códigos de Respuesta
 
 | Código | Significado para la placa | Acción de la placa |
 |--------|---------------------------|--------------------|
 | **2xx** | Lote aceptado | ACK hasta el mayor `client_id` del lote; descarta esos eventos del outbox |
-| **4xx** | Error de configuración (tabla, columna, esquema, apikey) | **Descarta el lote SIN reintentar** y lo registra |
+| **409** | Clave duplicada (`device_alias`, `client_id`) | Lo trata como éxito (“ya insertado”). Si el lote mezcla duplicados y nuevos, reintenta evento por evento |
+| **4xx (excepto 409)** | Error de configuración (tabla, columna, esquema, apikey) | **Descarta el lote SIN reintentar** y lo registra |
 | **5xx, timeout, error de red** | Transitorio | Conserva el lote; reintenta con **backoff exponencial 30 s → 30 min** |
 
 > La nube DEBE devolver 4xx (no 5xx) cuando el problema es configuración del lado dispositivo/nube (tabla inexistente, columnas inválidas, apikey inválida).
@@ -92,10 +95,13 @@ POST <api_url>/eventos
 ### 2.4 Idempotencia (deduplicación por `client_id`)
 
 - Cada evento lleva `client_id` (entero monótono por dispositivo, persistido entre reinicios).  
-- Ante POST duplicado (mismos `client_id`), la nube DEBE:  
-  1. Aceptar con 2xx aunque todos los `client_id` ya existan.  
-  2. **NO insertar filas duplicadas** (`Prefer: resolution=ignore-duplicates` de PostgREST es el mecanismo recomendado).  
-- Clave de unicidad sugerida: **`(device_alias, client_id)`** — `client_id` solo es único por dispositivo, no global.
+- La nube DEBE tener una **clave primaria o restricción única** sobre `(device_alias, client_id)`.  
+- Ante POST duplicado (mismos `client_id`), la nube PUEDE:  
+  1. Aceptar con 2xx si deduplica internamente, o  
+  2. Devolver **409** por violación de la clave única.  
+  La placa acepta ambos como éxito y **nunca inserta filas duplicadas**.  
+- Si un lote contiene eventos ya insertados y eventos nuevos, la nube devuelve 409 (INSERT atómico). La placa reintenta cada evento por separado: los duplicados dan 409 y los nuevos 2xx.
+- Clave de unicidad: **`(device_alias, client_id)`** — `client_id` solo es único por dispositivo, no global.
 
 ### 2.5 Límites (la nube DEBE aceptarlos)
 
@@ -110,9 +116,9 @@ POST <api_url>/eventos
 
 ```http
 POST /eventos HTTP/1.1
-Host: uigfxjovkqlbvxywvcta.supabase.co
+Host: qdzjtejgbafrfbmuggjo.supabase.co
 Content-Type: application/json
-Prefer: resolution=ignore-duplicates,return=minimal
+Prefer: return=minimal
 apikey: sb_publishable_...
 Authorization: Bearer sb_publishable_...
 
@@ -349,7 +355,7 @@ NUBE → DISPOSITIVO:  {"type":"hello_ok","protocol_version":1}
 | `read_interval_s` fuera de rango | `"Tiempo de lectura fuera de rango (5..3600 s)"` |
 | `upload_interval_s` fuera de rango | `"Tiempo de subida fuera de rango (10..3600 s)"` |
 | `api_url` no `http(s)://` | `"URL de API debe ser http(s)://"` |
-| `ws_url` no `ws(s)://` (ni vacío) | `"URL de WS debe ser ws(s)://"` |
+| `ws_url` no `ws(s)://` (ni vacío) | `"URL de WebSocket debe ser ws(s):// o vacia"` |
 | `version` no superior | `"version no superior"` |
 
 > **Si cambian `ssid` o `ws_url`**, el dispositivo desconecta WiFi/WS y reconecta con la nueva config; la nube DEBE tolerar la interrupción.
@@ -373,7 +379,8 @@ El dispositivo lo registra; la reconexión es automática (intervalo 5 s).
 | Situación | Comportamiento DEBE |
 |-----------|---------------------|
 | POST 2xx | ACK del lote (watermark = max `client_id`) |
-| POST 4xx | Descartar lote, registrar, **sin reintento** |
+| POST 409 | Tratar como “ya insertado”. Si el lote mezclaba duplicados y nuevos, reintentar evento por evento |
+| POST 4xx (excepto 409) | Descartar lote, registrar, **sin reintento** |
 | POST 5xx / timeout / red | Conservar lote, **backoff 30 s → 30 min** (exponencial, máx 30 min) |
 | WS caído | Reconexión cada **5 s**; el resto del sistema sigue funcionando |
 | Sin WiFi | Nada se envía; el **outbox conserva** los eventos |
@@ -385,7 +392,7 @@ El dispositivo lo registra; la reconexión es automática (intervalo 5 s).
 
 - **Outbox**: partición LittleFS 64 KB, máx **512 líneas / 32 KB**. Al superar: conserva las últimas líneas (trim).  
 - **At-least-once**: eventos no ack’d se reenvían tras reinicio o reconexión.  
-- **Dedup**: `client_id` monótono por dispositivo; nube usa `Prefer: resolution=ignore-duplicates`.  
+- **Dedup**: `client_id` monótono por dispositivo y PK `(device_alias, client_id)`; la nube puede devolver 2xx o 409 en duplicados.  
 - **Flush**: cada `upload_interval_s` (configurable 10..3600 s, default 30 s) + al recibir comando/ACK.
 
 ---
@@ -421,7 +428,7 @@ create table eventos (
 alter table eventos
   add constraint eventos_pk primary key (device_alias, client_id);
 
--- Dedup idempotente (PostgREST: Prefer resolution=ignore-duplicates)
+-- Dedup idempotente: clave (device_alias, client_id); 409 en duplicados
 -- Índices sugeridos
 create index eventos_recording_time_idx on eventos (recorded_at desc);
 create index eventos_device_idx        on eventos (device_alias, recorded_at desc);
@@ -572,7 +579,7 @@ El equipo cloud DEBE completar **todos** los puntos:
 - [ ] `client_id` como `BIGINT`, `recorded_at` como `timestamptz` (UTC)  
 - [ ] RLS desactivada (o política INSERT con apikey) — **aceptación explícita**  
 - [ ] POST `/eventos` array JSON, 2xx lote válido, 4xx error config, 5xx/timeout backoff  
-- [ ] `Prefer: resolution=ignore-duplicates,return=minimal` aceptado  
+- [ ] `Prefer: return=minimal` aceptado; duplicado -> 2xx o 409; PK `(device_alias, client_id)`  
 - [ ] POST duplicado (mismo `client_id`) → 2xx, no duplica filas  
 - [ ] WS `hello` → `hello_ok` ≤ 5 s  
 - [ ] WS `ping` JSON cada ≤ 120 s, `pong` aceptado  

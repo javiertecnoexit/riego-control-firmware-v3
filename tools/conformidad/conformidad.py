@@ -7,7 +7,7 @@ de `docs/contrato_nube_v3.md`:
 
   REST (subida):
     C1 POST /eventos acepta un lote valido y responde 2xx
-    C2 POST /eventos con client_id duplicados es idempotente (2xx)
+    C2 POST /eventos con client_id duplicados es idempotente (2xx o 409)
     C3 POST /eventos sin apikey es aceptado (el firmware solo envia
        headers de auth si la apikey esta configurada) [si --no-auth]
     C4 POST /eventos con apikey es aceptado [si --apikey]
@@ -68,11 +68,25 @@ def now_iso():
 
 
 def make_event(client_id, **extra):
+    # Superset completo de claves: PostgREST exige que todos los objetos de
+    # un lote tengan las mismas claves (el firmware emite null en las que no
+    # aplican).
     ev = {
         "client_id": client_id,
         "device_alias": DEVICE_ALIAS,
         "event_type": "reading",
         "recorded_at": now_iso(),
+        "zone_type": None,
+        "zone_index": None,
+        "reading_type": None,
+        "value": None,
+        "trigger": None,
+        "duration_s": None,
+        "condition": None,
+        "command_id": None,
+        "status": None,
+        "zone": None,
+        "action": None,
     }
     ev.update(extra)
     return ev
@@ -83,7 +97,7 @@ def rest_post(api_url, events, apikey=None):
     body = json.dumps(events).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("Prefer", "resolution=ignore-duplicates,return=minimal")
+    req.add_header("Prefer", "return=minimal")
     if apikey:
         req.add_header("apikey", apikey)
         req.add_header("Authorization", f"Bearer {apikey}")
@@ -277,7 +291,7 @@ def run_rest_cases(args, results):
                               f"POST /eventos -> {code}: {body[:200]}"))
 
     code, body = rest_post(args.api_url, lote, apikey=args.apikey)
-    if 200 <= code < 300:
+    if 200 <= code < 300 or code == 409:
         results.append(Result("C2", "duplicados idempotente", "PASS",
                               f"POST repetido -> {code}"))
     else:
@@ -310,9 +324,9 @@ def run_rest_cases(args, results):
 
     if args.check_storage:
         stored = rest_get_events(args.api_url)
-        if stored is None:
+        if not stored:
             results.append(Result("C5", "dedup verificado por lectura", "SKIP",
-                                  "el backend no expone lectura de eventos"))
+                                  "sin lectura visible (RLS o backend vacio)"))
             return
         ids = [ev.get("client_id") for ev in stored]
         dup = {i for i in ids if ids.count(i) > 1}

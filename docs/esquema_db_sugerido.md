@@ -46,9 +46,11 @@ alter table eventos
   add constraint eventos_pk primary key (device_alias, client_id);
 ```
 
-- El `Prefer: resolution=ignore-duplicates` (PostgREST) convierte los
-  conflictos de clave en "ignorar", que es exactamente la semantica del
-  contrato.
+- El firmware envia `Prefer: return=minimal`. Ante un `client_id` repetido, la
+  base puede responder 409 (violacion de la clave) o 2xx si deduplica; el
+  firmware trata ambos como exito. Si un lote mezcla duplicados y nuevos,
+  reintenta evento por evento. No requiere `resolution=ignore-duplicates`
+  (ese modo exige SELECT bajo RLS).
 
 ### 1.2 Indices sugeridos
 

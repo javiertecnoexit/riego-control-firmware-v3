@@ -34,8 +34,11 @@ sugerido (`docs/esquema_db_sugerido.md`), mock de referencia
 - [ ] Respuesta 2xx para lotes validos (hasta 32 eventos / 4096 bytes).
 - [ ] Respuesta 4xx para errores de configuracion (tabla/columna/apikey),
       nunca 5xx para esos casos.
-- [ ] `Prefer: resolution=ignore-duplicates,return=minimal` aceptado.
-- [ ] POST duplicado (mismos `client_id`) devuelve 2xx y NO duplica filas.
+- [ ] `Prefer: return=minimal` aceptado.
+- [ ] Clave primaria/unica `(device_alias, client_id)` creada.
+- [ ] POST duplicado (mismos `client_id`) devuelve 2xx o 409 y NO duplica filas.
+- [ ] Un lote con duplicados y eventos nuevos devuelve 409; el firmware reintenta
+      evento por evento y los nuevos se insertan.
 - [ ] Headers `apikey`/`Authorization: Bearer` aceptados cuando llegan.
 
 ## 4. WebSocket

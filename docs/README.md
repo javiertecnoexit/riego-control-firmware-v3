@@ -6,6 +6,8 @@
 | `decisiones.md` | Registro de decisiones con estado y fundamento | Vigente |
 | `arquitectura.md` | Arquitectura del firmware y del protocolo cloud | Resumen del plan; detalle en fases 1-3 |
 | `contrato_nube_v3.md` | Contrato normativo para el equipo de integracion cloud | Vigente (Fase 4) |
+| `implementacion_cloud.md` | Guia de implementacion para el equipo cloud (REST, WS, eventos, SQL, UI) | Vigente (Fase 4) |
+| `integracion_vivero360.md` | Registro de la integracion real con Vivero360/Supabase (v3.0.4) | Vigente |
 | `checklist_entrega_cloud.md` | Checklist que el equipo cloud debe cumplir antes de integrar | Vigente (Fase 4) |
 | `esquema_db_sugerido.md` | Esquema de tablas sugerido (no vinculante) | Vigente (Fase 4) |
 | `operacion.md` | Operacion y mantenimiento del firmware | Vigente (Fases 2-6) |

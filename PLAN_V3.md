@@ -420,6 +420,13 @@ etiquetado como `v3.0.2` (bacdb75), flasheado y verificado en placa. La entrega
 formal de la suite de conformidad al equipo cloud queda como accion externa del
 usuario (`tools/conformidad/` + README).
 
+Integracion real con Vivero360 (Supabase `qdzjtejgbafrfbmuggjo`): la ingesta se
+adapto a un backend con RLS y politica solo de INSERT (`Prefer: return=minimal`
++ fallback 409 por evento, D18), sin requerir SELECT ni `resolution=
+ignore-duplicates`. Verificado en placa: lote normal 201, duplicado forzado 409
+con reintento individual y drenaje del outbox, sin reinicios. Etiquetado como
+`v3.0.4`; el detalle queda en `docs/integracion_vivero360.md`.
+
 ## 11. Decisiones
 
 ### Prioridades Del Usuario (Vigentes)

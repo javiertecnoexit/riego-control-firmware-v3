@@ -207,6 +207,123 @@ static bool outboxBatch(char* body, size_t bodyCap, size_t* bodyLen,
     return true;
 }
 
+// POST de un cuerpo JSON a <base>/eventos. Devuelve el codigo HTTP (-1 si no
+// se pudo iniciar). El cliente se libera despues de que el destructor de
+// HTTPClient lo haya detenido (evita el use-after-free hallado en v3.0.3).
+static int httpPostJson(const char* full, bool secure, const uint8_t* body,
+                        size_t bodyLen, bool logBody) {
+    int code = -1;
+    WiFiClient* client = NULL;
+    {
+        HTTPClient http;
+        bool ok = false;
+        if (secure) {
+            client = new WiFiClientSecure();
+            ((WiFiClientSecure*)client)->setInsecure();   // D5: TLS sin CA
+            ok = http.begin(*(WiFiClientSecure*)client, full);
+        } else {
+            client = new WiFiClient();
+            ok = http.begin(*client, full);
+        }
+        if (!ok) {
+            Serial.printf("[NET] POST %s: no se pudo iniciar\n", full);
+            delete client;
+            return -1;
+        }
+        // setTimeout toma MILISEGUNDOS en arduino-esp32 3.x (en 2.x eran
+        // segundos): pasar CLOUD_HTTP_TIMEOUT_MS / 1000 daba un timeout de
+        // lectura de 10 ms -> READ_TIMEOUT (-11) en toda respuesta.
+        http.setTimeout(CLOUD_HTTP_TIMEOUT_MS);
+        http.addHeader("Content-Type", "application/json");
+        // return=minimal: el backend (Vivero360/Supabase) puede tener RLS con
+        // politica solo de INSERT. resolution=ignore-duplicates genera un
+        // ON CONFLICT que exige SELECT y devuelve 401 en ese caso. La
+        // idempotencia se resuelve con el 409 en httpFlushOneByOne.
+        http.addHeader("Prefer", "return=minimal");
+        if (s_cfg.apiKey[0] != '\0') {
+            http.addHeader("apikey", s_cfg.apiKey);
+            http.addHeader("Authorization", String("Bearer ") + s_cfg.apiKey);
+        }
+        code = http.POST((uint8_t*)body, bodyLen);
+        if (logBody && code != 409 && (code < 200 || code >= 300)) {
+            // Diagnostico: el cuerpo del error dice el motivo exacto
+            // (PostgREST: columna faltante, timestamp invalido, etc.).
+            String resp = http.getString();
+            Serial.printf("[NET] POST /eventos %d respuesta: %s\n",
+                          code, resp.c_str());
+        }
+        http.end();
+        // El destructor de HTTPClient (al cerrar este bloque) invoca
+        // _client->stop(): el cliente debe estar VIVO en ese momento.
+    }
+    delete client;
+    return code;
+}
+
+// Un lote con eventos ya insertados (ACK perdido) devuelve 409 y, como el
+// INSERT por lotes es atomico, tambien caen los eventos nuevos del lote.
+// Se reenvia evento por evento: 2xx insertado, 409 ya insertado (ambos se
+// confirman), 4xx se descarta ese evento, 5xx/timeout corta con backoff.
+static void httpFlushOneByOne(const char* full, bool secure) {
+    for (uint8_t i = 0; i < NET_OUTBOX_BATCH_MAX; ++i) {
+        char line[768];
+        if (!storeOutboxReadLine(0, line, sizeof(line))) {
+            if (storeOutboxCount() == 0) {
+                Serial.println("[NET] fallback 409: outbox drenado");
+            } else {
+                Serial.println("[NET] fallback 409: linea ilegible en el outbox");
+            }
+            return;
+        }
+        const size_t ll = strlen(line);
+        if (ll == 0) {
+            Serial.println("[NET] fallback 409: linea vacia en el outbox");
+            return;
+        }
+        char* body = (char*)malloc(ll + 3);
+        if (!body) return;
+        body[0] = '[';
+        memcpy(body + 1, line, ll);
+        body[ll + 1] = ']';
+        body[ll + 2] = '\0';
+        const int code = httpPostJson(full, secure, (uint8_t*)body, ll + 2,
+                                      true);
+        free(body);
+
+        const char* p = strstr(line, "\"client_id\":");
+        const uint32_t id = p ? (uint32_t)strtoul(p + 12, NULL, 10) : 0;
+        if (id == 0) {
+            Serial.println("[NET] fallback 409: evento sin client_id");
+            return;
+        }
+        if (code >= 200 && code < 300) {
+            storeOutboxAckUpTo(id);
+            s_httpBackoffMs = CLOUD_BACKOFF_BASE_S * 1000UL;
+            s_httpBackoffAtMs = 0;
+            markBackendSeen();
+            Serial.printf("[NET] POST individual %d: ack hasta %lu\n", code,
+                          (unsigned long)id);
+        } else if (code == 409) {
+            storeOutboxAckUpTo(id);   // ya estaba insertado
+            s_httpBackoffMs = CLOUD_BACKOFF_BASE_S * 1000UL;
+            s_httpBackoffAtMs = 0;
+            markBackendSeen();
+            Serial.printf("[NET] POST individual 409: ya insertado, ack hasta "
+                          "%lu\n", (unsigned long)id);
+        } else if (code >= 400 && code < 500) {
+            storeOutboxAckUpTo(id);   // evento invalido: no bloquear la cola
+            Serial.printf("[NET] POST individual %d: evento descartado\n", code);
+        } else {
+            s_httpBackoffMs = min(s_httpBackoffMs * 2,
+                                  (uint32_t)CLOUD_BACKOFF_MAX_MS);
+            s_httpBackoffAtMs = millis() + s_httpBackoffMs;
+            Serial.printf("[NET] POST individual %d: backoff %lums\n", code,
+                          (unsigned long)s_httpBackoffMs);
+            return;
+        }
+    }
+}
+
 static void httpFlush() {
     if (!wifiEnsure()) return;
     const uint32_t now = millis();
@@ -241,56 +358,8 @@ static void httpFlush() {
     snprintf(full, 256, "%s://%s:%u%.*s/eventos",
              u.secure ? "https" : "http", u.host, u.port, (int)baseLen, u.path);
 
-    int code = 0;
-    WiFiClient* client = NULL;
-    {
-        HTTPClient http;
-        bool ok = false;
-        if (u.secure) {
-            client = new WiFiClientSecure();
-            ((WiFiClientSecure*)client)->setInsecure();   // D5: TLS sin CA
-            ok = http.begin(*(WiFiClientSecure*)client, full);
-        } else {
-            client = new WiFiClient();
-            ok = http.begin(*client, full);
-        }
-        if (!ok) {
-            Serial.printf("[NET] POST %s: no se pudo iniciar\n", full);
-            delete client;
-            free(full);
-            free(body);
-            return;
-        }
-        // setTimeout toma MILISEGUNDOS en arduino-esp32 3.x (en 2.x eran
-        // segundos): pasar CLOUD_HTTP_TIMEOUT_MS / 1000 daba un timeout de
-        // lectura de 10 ms -> READ_TIMEOUT (-11) en toda respuesta.
-        http.setTimeout(CLOUD_HTTP_TIMEOUT_MS);
-        http.addHeader("Content-Type", "application/json");
-        http.addHeader("Prefer", "resolution=ignore-duplicates,return=minimal");
-        if (s_cfg.apiKey[0] != '\0') {
-            http.addHeader("apikey", s_cfg.apiKey);
-            http.addHeader("Authorization", String("Bearer ") + s_cfg.apiKey);
-        }
-
-        code = http.POST((uint8_t*)body, bodyLen);
-        if (code < 200 || code >= 300) {
-            // Diagnostico: el cuerpo del error dice el motivo exacto
-            // (PostgREST: columna faltante, timestamp invalido, etc.).
-            String resp = http.getString();
-            Serial.printf("[NET] POST /eventos %d respuesta: %s\n",
-                          code, resp.c_str());
-        }
-        http.end();
-        // El destructor de HTTPClient (al cerrar este bloque) invoca
-        // _client->stop(): el cliente debe estar VIVO en ese momento.
-        // Liberarlo antes del fin de scope era use-after-free y provocababa
-        // LoadProhibited al salir de httpFlush (hallado con Supabase 400).
-    }
-    // HTTPClient guarda una referencia al cliente pasado a begin(): el
-    // llamador es quien lo libera. Sin esto se fugaba un WiFiClient por POST.
-    delete client;
-    free(full);
-    free(body);
+    const int code = httpPostJson(full, u.secure, (uint8_t*)body, bodyLen,
+                                  true);
 
     if (code >= 200 && code < 300) {
         storeOutboxAckUpTo(watermark);
@@ -299,6 +368,12 @@ static void httpFlush() {
         markBackendSeen();
         Serial.printf("[NET] POST /eventos %d: ack hasta %lu, outbox %u\n",
                       code, (unsigned long)watermark, (unsigned)storeOutboxCount());
+    } else if (code == 409) {
+        // Duplicados en el lote (ACK perdido) + posibles eventos nuevos:
+        // reintento individual para no perder los nuevos.
+        Serial.println("[NET] POST /eventos 409: duplicados, reintento "
+                       "individual");
+        httpFlushOneByOne(full, u.secure);
     } else if (code >= 400 && code < 500) {
         // Error de configuracion (tabla/columna/apikey): sin reintento del lote.
         storeOutboxAckUpTo(watermark);
@@ -310,6 +385,8 @@ static void httpFlush() {
         Serial.printf("[NET] POST /eventos %d: backoff %lums\n", code,
                       (unsigned long)s_httpBackoffMs);
     }
+    free(full);
+    free(body);
 }
 
 // ----------------------------------------------------------------------------
@@ -615,6 +692,11 @@ static void netTask(void*) {
 // ----------------------------------------------------------------------------
 void netInit() {
     s_cfg = storeConfigLoad();
+    // Diagnostico: configuracion activa (sin exponer la apikey).
+    Serial.printf("[NET] API %s | alias \"%s\" | apikey %s | WS %s\n",
+                  s_cfg.apiUrl, s_cfg.deviceAlias,
+                  s_cfg.apiKey[0] ? "si" : "no",
+                  s_cfg.wsUrl[0] ? s_cfg.wsUrl : "no");
     // No persistir credenciales/NVS en cada connect/disconnect (disconnect(true)
     // en wifiEnsure escribiria flash en cada reintento).
     WiFi.persistent(false);

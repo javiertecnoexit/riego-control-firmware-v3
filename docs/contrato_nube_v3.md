@@ -46,7 +46,7 @@ POST <api_url>/eventos
 | Header | Valor | Obligatorio |
 |---|---|---|
 | `Content-Type` | `application/json` | SI |
-| `Prefer` | `resolution=ignore-duplicates,return=minimal` | SI (ver 2.4) |
+| `Prefer` | `return=minimal` | SI (ver 2.4) |
 | `apikey` | la apikey del proyecto | solo si configurada |
 | `Authorization` | `Bearer <apikey>` | solo si configurada |
 
@@ -56,12 +56,18 @@ sin apikey, o documentar que su backend requiere autenticacion propia por otro
 medio configurable en el portal. La nube NO DEBE rechazar el POST solo porque
 falten estos headers si el contrato no define otro mecanismo.
 
+> **Nota (v3.0.4)**: el firmware NO envia `resolution=ignore-duplicates`.
+> Ese modo genera un `ON CONFLICT` que, con RLS y una politica solo de INSERT,
+> exige permiso de SELECT y devuelve 401. La idempotencia se resuelve con el
+> codigo 409 (seccion 2.4).
+
 ### 2.3 Codigos de respuesta
 
 | Codigo | Significado para el firmware |
 |---|---|
 | 2xx | Lote aceptado. El firmware confirma (ack) hasta el mayor `client_id` del lote y descarta esos eventos del outbox |
-| 4xx | Error de configuracion (tabla, columna, esquema, apikey). El firmware descarta el lote SIN reintentar y lo registra |
+| 409 | Clave duplicada (`device_alias`, `client_id`): el firmware lo trata como exito ("ya insertado"). Si el lote mezcla duplicados y eventos nuevos, reintenta evento por evento (2xx insertado, 409 ya insertado) |
+| 4xx (excepto 409) | Error de configuracion (tabla, columna, esquema, apikey). El firmware descarta el lote SIN reintentar y lo registra |
 | 5xx, timeout, error de red | Transitorio. El firmware conserva el lote y reintenta con backoff (30 s -> 30 min) |
 
 La nube DEBE devolver 2xx para un lote valido. La nube DEBE devolver 4xx (no
@@ -71,14 +77,19 @@ La nube DEBE devolver 2xx para un lote valido. La nube DEBE devolver 4xx (no
 ### 2.4 Idempotencia (deduplicacion por `client_id`)
 
 Cada evento lleva `client_id`, un entero monotono por dispositivo, persistido
-entre reinicios. Ante un POST duplicado (mismos `client_id`), la nube DEBE
-comportarse de forma idempotente:
+entre reinicios. La nube DEBE garantizar unicidad con una clave primaria o
+restriccion unica sobre `(device_alias, client_id)`.
 
-- DEBE aceptar el lote con 2xx aunque todos sus `client_id` ya existan.
-- NO DEBE insertar filas duplicadas para un `client_id` repetido
-  (el `Prefer: resolution=ignore-duplicates` de PostgREST es el mecanismo
-  recomendado).
-- La clave de unicidad SUGERIDA es `(device_alias, client_id)`: `client_id`
+Comportamiento esperado ante un POST duplicado:
+
+- La nube PUEDE aceptar el lote con 2xx si deduplica internamente, o devolver
+  **409** por violacion de la clave unica. El firmware acepta ambos como exito.
+- NO DEBE insertar filas duplicadas para un `client_id` repetido.
+- Si un lote contiene eventos ya insertados y eventos nuevos, la nube devuelve
+  409 (el INSERT por lotes es atomico). El firmware reintenta cada evento por
+  separado: los duplicados vuelven a dar 409 y se confirman; los nuevos se
+  insertan con 2xx.
+- La clave de unicidad DEBE ser `(device_alias, client_id)`: `client_id`
   solo es unico por dispositivo, no global.
 
 ### 2.5 Limites

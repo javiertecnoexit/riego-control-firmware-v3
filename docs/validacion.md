@@ -60,3 +60,42 @@ Notas:
   alimentan en cada iteracion y alrededor de cada `httpFlush`.
 - Verificado en placa: respuesta lenta del mock (20 s) -> `POST -11` (READ
   TIMEOUT) con 0 resets; recuperacion a 201 con backlog drenado.
+
+### Integracion Vivero360 (Supabase, 20/10/2026)
+
+Backend de prueba: proyecto `qdzjtejgbafrfbmuggjo`, tabla `public.eventos`,
+PK `eventos_pkey`, RLS activa con una politica **solo de INSERT** para `anon`
+(sin politica de SELECT).
+
+Diagnostico:
+
+- Con `Prefer: return=minimal` el INSERT responde **201**.
+- Con `Prefer: resolution=ignore-duplicates,return=minimal` responde **401**
+  (`42501`): el `ON CONFLICT` exige SELECT bajo RLS.
+- El SELECT con la clave publicable devuelve `[]` (sin politica de lectura).
+- La PK existe: un INSERT duplicado responde **409** (`23505`,
+  `eventos_pkey`).
+
+Cambio de firmware (v3.0.4):
+
+- Header de subida: `Prefer: return=minimal`.
+- Fallback ante 409: reintento evento por evento (2xx insertado, 409 ya
+  insertado; ambos se confirman; 4xx descarta ese evento; 5xx corta con
+  backoff). Evita perder eventos nuevos cuando un lote mezcla duplicados.
+- Log de arranque: `[NET] API <url> | alias "<alias>" | apikey si/no | WS ...`.
+
+Evidencia:
+
+| Prueba | Resultado |
+|---|---|
+| `curl` lote de 4 lecturas, `device_alias=esp32-riego-01`, `return=minimal` | 201 |
+| Placa, lote normal | `POST /eventos 201: ack hasta 55090, outbox 3` |
+| Duplicado forzado del `client_id` 55097 | Lote -> `409`; fallback: `409 ya insertado, ack hasta 55097`; `201` hasta 55105; outbox drenado |
+| Estabilidad | 0 reinicios por watchdog durante la prueba |
+
+Pendiente:
+
+- Cambiar el alias de la placa de `ESP32-SIM-01` a `esp32-riego-01` (portal).
+- Confirmar como lee Vivero360 la tabla (backend con service_role o politica de
+  SELECT); con la clave publicable el SELECT devuelve `[]`.
+- El desarrollador preve autenticacion por dispositivo en una etapa posterior.
