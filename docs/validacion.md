@@ -95,7 +95,9 @@ Evidencia:
 
 Pendiente:
 
-- Cambiar el alias de la placa de `ESP32-SIM-01` a `esp32-riego-01` (portal).
+- Alias cambiado a `esp32-riego-01` (config v18) y verificado en el arranque:
+  `[NET] API ... | alias "esp32-riego-01"`; los eventos del outbox ya llevan
+  ese alias y el POST responde 201.
 - Confirmar como lee Vivero360 la tabla (backend con service_role o politica de
   SELECT); con la clave publicable el SELECT devuelve `[]`.
 - El desarrollador preve autenticacion por dispositivo en una etapa posterior.

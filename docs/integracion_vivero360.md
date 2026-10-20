@@ -27,8 +27,8 @@ dispositivo en una etapa posterior. No commitear claves en el repositorio.
 - Cada evento lleva el superset de 15 claves; las no aplicables van en `null`.
 - Respuestas: `2xx` -> ack del lote; `409` -> ya insertado; `4xx` (excepto 409)
   -> se descarta el lote; `5xx`/timeout -> backoff 30 s a 30 min.
-- `device_alias` propio: `esp32-riego-01` (hoy la placa tiene
-  `ESP32-SIM-01`; hay que cambiarlo en el portal).
+- `device_alias` propio: `esp32-riego-01` (aplicado en la placa el
+  20/10/2026, config v18; verificado en el arranque y en el outbox).
 - `client_id`: `uint32` monotono por dispositivo. La PK compuesta evita
   colisiones con el simulador de Vivero360.
 - `recorded_at`: UTC ISO 8601 (`...Z`); la base tambien acepta `-03:00`.
@@ -56,6 +56,7 @@ dispositivo en una etapa posterior. No commitear claves en el repositorio.
 | `curl` lote de 4 lecturas, `device_alias=esp32-riego-01`, `return=minimal` | `201` |
 | Placa, lote normal | `POST /eventos 201: ack hasta 55090, outbox 3` |
 | Duplicado forzado del `client_id` 55097 | Lote `409`; fallback: `409 ya insertado, ack hasta 55097`; `201` hasta 55105; outbox drenado |
+| Alias aplicado (config v18) | `[NET] API ... \| alias "esp32-riego-01"`; los eventos del outbox llevan ese alias |
 | Estabilidad | 0 reinicios por watchdog |
 
 El duplicado se inserto manualmente con `curl` antes del siguiente flush para
@@ -69,7 +70,7 @@ forzar el 409. Los eventos nuevos del mismo lote se insertaron uno por uno
 | `api_url` | `https://qdzjtejgbafrfbmuggjo.supabase.co/rest/v1` |
 | `ws_url` | vacio (solo subida; sin comandos remotos por ahora) |
 | `apikey` | publishable del proyecto (configurada) |
-| `device_alias` | `esp32-riego-01` (pendiente; actualmente `ESP32-SIM-01`) |
+| `device_alias` | `esp32-riego-01` (aplicado, config v18) |
 
 Para cambiar el alias: pulsar el boton **Configuracion** en operacion normal.
 La placa detiene el riego, pausa la red y levanta el AP
@@ -77,7 +78,7 @@ La placa detiene el riego, pausa la red y levanta el AP
 
 ## 6. Pendientes
 
-1. Cambiar el alias a `esp32-riego-01` en el portal.
+1. ~~Cambiar el alias a `esp32-riego-01`~~ (hecho el 20/10/2026, config v18).
 2. Confirmar como lee Vivero360 la tabla:
    - backend con `service_role` o rol autenticado -> no requiere cambios; o
    - navegador con la clave publicable -> necesita politica de SELECT o una
